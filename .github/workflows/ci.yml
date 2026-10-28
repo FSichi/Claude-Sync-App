@@ -18,6 +18,9 @@ jobs:
         with:
           node-version: 24
       - run: npm test
+      - name: El CHANGELOG tiene la versión de package.json
+        shell: pwsh
+        run: node installer/notas-release.mjs (Get-Content package.json -Raw | ConvertFrom-Json).version
 
   instalador:
     needs: tests

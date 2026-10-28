@@ -5,17 +5,25 @@ Cómo usar la app, qué protege y dónde queda cada cosa. Para instalarla, mirá
 ## Cómo se usa
 
 - **Abrir:** acceso directo **Claude Archivo** (Escritorio o menú Inicio). Se abre una ventana propia. El servidor corre oculto y se apaga solo unos minutos después de que la cerrás.
-- **Primera vez:** elegí dónde guardar las copias (⚙ → *Destinos*). Conviene uno en otro disco y otro en la nube.
-- **Sincronizar:** botón **Sincronizar ahora**. La primera vez copia todo y puede tardar varios minutos. Las siguientes copian solo lo nuevo.
-- **Buscar:** el cuadro de arriba filtra por título o carpeta. **Buscar en el contenido** (o Enter) busca en el texto de todas las conversaciones.
-- **Leer:** clic en una conversación. Las herramientas se ven compactas: clic en una para ver qué recibió y qué devolvió.
+- **Primera vez:** elegí dónde guardar las copias (*Ajustes → Destinos*). Conviene uno en otro disco y otro en la nube.
+- **Sincronizar:** botón **Sincronizar**, abajo a la izquierda. La primera vez copia todo y puede tardar varios minutos. Las siguientes copian solo lo nuevo. El inicio te dice cuántas conversaciones tienen cambios sin respaldar.
+- **Buscar:** el buscador del inicio (`Ctrl+K` o `/`) busca en el texto de todas las conversaciones. En *Conversaciones*, el cuadro filtra por título o carpeta y Enter busca en el contenido. Al abrir un resultado, las coincidencias quedan resaltadas y **Siguiente** salta a cada una.
+- **Filtrar:** en *Conversaciones*, el botón **Filtros** abre un panel con fecha (hoy, 7 días, 30 días, este año o un rango), estado, origen y carpeta. Cada filtro activo queda como una etiqueta arriba de la lista: con la X lo sacás.
+- **Leer:** clic en una conversación. Las herramientas que Claude usó seguidas se agrupan: clic en el grupo para verlas y en cada una para ver qué recibió y qué devolvió. Arriba podés ocultar las herramientas o el razonamiento.
+- **Cerrar:** la X de la conversación o `Esc` la cierra. Otro `Esc` vuelve al inicio.
 - **Restaurar en Claude:** en una conversación que ya no está en Claude, copia su `.jsonl` (y sus subagentes) a `%USERPROFILE%\.claude\projects` para retomarla con `claude --resume`. Nunca pisa nada.
 - **Exportar .md:** baja la conversación como Markdown legible.
-- **Tu nombre:** ⚙ → *Tu nombre* cambia cómo aparecen tus mensajes.
+- **Tu nombre y el tema:** *Ajustes → General*.
+
+### Actualizaciones
+
+Cada vez que se abre, la app busca versiones nuevas en la lista pública de versiones de GitHub. Si hay una, te muestra qué trae y **Actualizar** baja el instalador, comprueba su SHA-256, lo instala y vuelve a abrir la app. Tu configuración y tus copias no se tocan. Mientras sincroniza no se puede actualizar.
+
+En *Ajustes → App* ves tu versión, el historial de cambios y un botón para buscar ahora. Ahí también se apaga la búsqueda automática: la app deja de conectarse a internet.
 
 ### Destinos
 
-En ⚙ → *Destinos* podés:
+En *Ajustes → Destinos* podés:
 
 - **Agregar** una carpeta. La app detecta Google Drive, OneDrive, Dropbox e iCloud, o elegís cualquier otra con el explorador (otro disco, un NAS con `\\servidor\carpeta`).
 - **Elegir el principal**, que es desde donde la app te muestra las conversaciones.
@@ -48,7 +56,7 @@ Agregá como destino una carpeta dentro de Google Drive, por ejemplo `G:\Mi unid
 
 ## La regla de oro: solo copia
 
-El programa no tiene ninguna instrucción que borre archivos (se puede verificar buscando `unlink`, `rm` o `rmdir` en `src\`: no aparecen). Nunca modifica los originales de Claude: solo los lee. En el archivo, únicamente agrega o actualiza, y antes de actualizar algo que no sea un agregado al final, guarda la versión anterior. El desinstalador saca solo la app: no toca tu configuración ni tus copias.
+El programa no tiene ninguna instrucción que borre archivos (se puede verificar buscando `unlink`, `rm` o `rmdir` en `src\`: no aparecen). Nunca modifica los originales de Claude: solo los lee. El instalador de cada actualización queda en la carpeta temporal de Windows (`%TEMP%\Claude-Archivo-actualizacion\`). En el archivo, únicamente agrega o actualiza, y antes de actualizar algo que no sea un agregado al final, guarda la versión anterior. El desinstalador saca solo la app: no toca tu configuración ni tus copias.
 
 ## Dónde queda cada cosa
 
@@ -95,6 +103,10 @@ Ojo: las conversaciones son texto plano y pueden tener cualquier cosa que haya a
 | `src\config.js` | Configuración del usuario: dónde está, cómo se crea la primera vez y cómo se migra. |
 | `src\destinos.js` | Destinos: validar, guardar en `config.json`, sugerir, explorador de carpetas y accesos directos. |
 | `src\servidor.js` | Servidor local (solo `127.0.0.1`, con token por sesión) y ventana. |
-| `ui\` | Interfaz. |
+| `src\actualizaciones.js` | Busca versiones nuevas en GitHub, baja el instalador, lo verifica y lo ejecuta. |
+| `src\changelog.js` | Lee `CHANGELOG.md` y las notas de cada versión. |
+| `ui\index.html`, `ui\estilos.css` | Estructura y diseño de la interfaz. |
+| `ui\js\` | Interfaz, un módulo por parte: inicio, conversaciones, lector, filtros, ajustes, actualizaciones. |
+| `CHANGELOG.md` | Los cambios de cada versión. La app los muestra y el release de GitHub los usa como notas. |
 | `installer\` | Instalador (Inno Setup) y scripts para armarlo y probarlo. |
 | `.github\workflows\` | CI (tests e instalador en cada PR) y publicación de versiones. |
