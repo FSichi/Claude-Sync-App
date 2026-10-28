@@ -26,7 +26,11 @@ Requisitos: Windows 10 u 11 de 64 bits. No hace falta instalar Node.js: viene in
 - **Guarda versiones:** si Claude reescribe una conversación de una forma que no es agregar al final, la versión anterior queda en `_versiones\`.
 - **Visor:** tus mensajes, las respuestas, las herramientas que se usaron (con lo que recibieron y devolvieron), las imágenes y los subagentes.
 - **Búsqueda** por título y en el texto completo de todas las conversaciones (`Ctrl+K`).
-- **Filtros** por fecha o rango de fechas, estado (en Claude, borrada, recuperada, sin respaldar), origen (escritorio, terminal, Cowork, IDE) y carpeta.
+- **Filtros** por fecha o rango de fechas, estado (en Claude, borrada, recuperada, sin respaldar, en riesgo), origen (escritorio, terminal, Cowork, IDE) y carpeta.
+- **Archivos:** cada archivo que Claude leyó, escribió o editó, en qué conversaciones aparece y sus versiones (los checkpoints de Claude Code, lo que escribió y lo que se reconstruye de cada edición), aunque ya no esté en tu PC.
+- **Avisa antes de perder algo:** si una conversación sin respaldar está por cumplir el plazo en que Claude Code borra las sesiones, o si pasan días sin sincronizar.
+- **Comprobar copias:** revisa que cada destino tenga todo y sin daños, y repara lo que esté mal con una copia buena, sin borrar nada.
+- **Actividad:** el inicio muestra los últimos 30 días y los proyectos más activos.
 - **Restaurar en Claude:** devuelve una conversación a Claude Code para retomarla con `claude --resume`.
 - **Texto legible:** cada destino tiene las conversaciones en Markdown y un índice (`texto\INDICE.md`), para leerlas sin la app.
 - **Varios destinos:** detecta Google Drive, OneDrive, Dropbox e iCloud. Si el destino es una carpeta sincronizada, la copia se sube sola a la nube.

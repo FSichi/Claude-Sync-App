@@ -268,7 +268,15 @@ async function infoConversacion(clave, abs) {
   const viva = fuente && !fuente.recuperada ? rutaViva(clave) : null;
   const restauracion = destinoRestauracion(clave, info);
   const enClaude = (viva && (await existe(viva))) || (restauracion ? await existe(restauracion.jsonl) : false);
-  return { ...info, enClaude, comandoRetomar: info.id && info.cwd ? `cd "${info.cwd}"\nclaude --resume ${info.id}` : null };
+  const { archivos, uso, ...resto } = info;
+  const tocados = await archivosDeConversacion(clave).catch(() => []);
+  return {
+    ...resto,
+    archivosTocados: tocados.length,
+    archivosCambiados: tocados.filter((a) => a.editado || a.escrito).length,
+    enClaude,
+    comandoRetomar: info.id && info.cwd ? `cd "${info.cwd}"\nclaude --resume ${info.id}` : null,
+  };
 }
 
 async function listaConversaciones() {
@@ -285,7 +293,10 @@ async function listaConversaciones() {
   for (const c of Object.values(conversaciones)) {
     const { primerPrompt, ultimoPrompt, tituloPropio, tituloIA, resumen, archivos, uso, ...resto } = c;
     const cambiados = (archivos ?? []).filter((a) => a.editado || a.escrito).length;
-    lista.push({ ...resto, primerPrompt: primerPrompt?.slice(0, 200) ?? null, pendiente: pend.conversaciones.has(c.clave), vence: vence(c.clave), archivosCambiados: cambiados });
+    // Respuestas de Claude por día, para el gráfico de actividad del inicio.
+    const actividad = {};
+    for (const u of uso ?? []) actividad[u.dia] = (actividad[u.dia] ?? 0) + u.respuestas;
+    lista.push({ ...resto, primerPrompt: primerPrompt?.slice(0, 200) ?? null, pendiente: pend.conversaciones.has(c.clave), vence: vence(c.clave), archivosCambiados: cambiados, actividad: uso ? actividad : null });
   }
   for (const [clave, p] of pend.conversaciones) {
     if (conversaciones[clave]) continue;
@@ -313,19 +324,26 @@ async function mapaDeArchivos() {
 const resumenArchivo = (a) => ({ clave: a.clave, ruta: a.ruta, leido: a.leido, escrito: a.escrito, editado: a.editado, checkpoint: a.checkpoint, ultima: a.ultima, conversaciones: a.conversaciones.length });
 const normalizarRuta = (s) => normalizar(s).replace(/\\/g, '/');
 
-async function listaArchivos(consulta, todos) {
+const MAX_LISTA_ARCHIVOS = 300;
+
+// modo: 'cambiados' (los que Claude escribió o editó), 'faltan' (cambiados que ya no están en tu PC) o 'todos'.
+async function listaArchivos(consulta, modo = 'cambiados') {
   const { mapa, version, conversaciones } = await mapaDeArchivos();
   const q = normalizarRuta((consulta ?? '').trim());
-  const salida = [];
+  let salida = [];
   for (const a of mapa.values()) {
-    if (!todos && !a.editado && !a.escrito && !a.checkpoint) continue;
+    if (modo !== 'todos' && !a.editado && !a.escrito && !a.checkpoint) continue;
     if (q && !normalizarRuta(a.ruta).includes(q)) continue;
     salida.push(resumenArchivo(a));
   }
   salida.sort((x, y) => (y.ultima ?? '').localeCompare(x.ultima ?? ''));
+  const conExiste = async (lista) => Promise.all(lista.map(async (a) => ({ ...a, existe: await existe(a.ruta) })));
+  if (modo === 'faltan') salida = (await conExiste(salida)).filter((a) => !a.existe);
+  const total = salida.length;
+  const archivos = modo === 'faltan' ? salida.slice(0, MAX_LISTA_ARCHIVOS) : await conExiste(salida.slice(0, MAX_LISTA_ARCHIVOS));
   // Con un índice de una versión anterior todavía no hay datos de archivos: se arman en la próxima sincronización.
   const faltaIndice = version < 2 && Object.keys(conversaciones).length > 0;
-  return { total: salida.length, archivos: salida.slice(0, 300), faltaIndice };
+  return { total, archivos, faltaIndice };
 }
 
 async function archivosDeConversacion(clave) {
@@ -811,7 +829,7 @@ async function manejar(req, res) {
       return json(res, 200, { nombreUsuario: config.nombreUsuario, buscarActualizaciones: config.buscarActualizaciones, recordatorioDias: config.recordatorioDias });
 
     case 'GET /api/archivos':
-      return json(res, 200, await listaArchivos(q('q'), q('todos') === '1'));
+      return json(res, 200, await listaArchivos(q('q'), ['todos', 'faltan'].includes(q('modo')) ? q('modo') : 'cambiados'));
 
     case 'GET /api/archivos-de':
       return json(res, 200, await archivosDeConversacion(q('clave')));

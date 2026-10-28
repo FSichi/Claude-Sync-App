@@ -1,10 +1,13 @@
-// Inicio: búsqueda, avisos, resumen, conversaciones recientes y destinos.
+// Inicio: búsqueda, avisos, números, actividad, conversaciones recientes, proyectos y destinos.
 import { h, numero, tamano, hace, fechaCorta, nombreCarpeta, rutaConversacion, navegar, plural } from './util.js';
 import { icono } from './iconos.js';
 import { est, sincronizarAhora, ultimaSincronizacion } from './estado.js';
 import { abrirModalVersion } from './actualizacion.js';
 import { abrirModal } from './capas.js';
 import { setFiltros, filtros } from './filtros.js';
+
+const DIA = 86400000;
+const DIAS_ACTIVIDAD = 30;
 
 export const iconoDestino = (d) => (d.etiqueta === 'Red' ? 'red' : /^Disco/.test(d.etiqueta) ? 'disco' : 'nube');
 
@@ -14,8 +17,13 @@ export function estadoDestino(d) {
   return { clase: 'ok', texto: `Al día · ${hace(d.ultimaSync)}` };
 }
 
+// Días que faltan para que Claude Code pueda borrar una conversación con cambios sin respaldar.
+export const diasParaBorrarse = (c) => (c.pendiente && c.vence ? Math.ceil((new Date(c.vence) - Date.now()) / DIA) : null);
+
 export function etiquetasConversacion(c, { completas = false } = {}) {
   const lista = [];
+  const dias = diasParaBorrarse(c);
+  if (dias != null && dias <= 7) lista.push(h('span', { class: 'etq etq-peligro', title: 'Tiene cambios sin respaldar y Claude Code borra las sesiones que pasan un tiempo sin cambios' }, dias <= 0 ? 'Se puede borrar hoy' : `Se borra en ${plural(dias, 'día', 'días')}`));
   if (c.eliminadaEnOrigen && !c.recuperada) lista.push(h('span', { class: 'etq etq-peligro', title: 'Ya no está en Claude: esta copia es la única' }, 'Borrada en Claude'));
   if (c.recuperada) lista.push(h('span', { class: 'etq etq-alerta' }, 'Recuperada'));
   if (c.pendiente) lista.push(h('span', { class: 'etq etq-acento' }, c.soloEnClaude ? 'Sin respaldar' : 'Cambios nuevos'));
@@ -37,21 +45,126 @@ function avisos(e) {
   const errores = e.ultimo?.destinos.reduce((s, d) => s + d.errores.length, 0) ?? 0;
   const faltantes = e.destinos.filter((d) => !d.disponible);
   const sinCopia = e.destinos.filter((d) => d.disponible && !d.ultimaSync);
+  const pend = e.pendientes?.conversaciones ?? 0;
+  const diasSin = ultima ? Math.floor((Date.now() - new Date(ultima)) / DIA) : 0;
+  const conProblemas = e.destinos.filter((d) => d.comprobacion?.problemas);
 
   if (est.conexionPerdida) aviso('error', 'alerta', 'Se perdió la conexión con la app. Cerrá esta ventana y volvé a abrir Claude Archivo.');
   if (e.error) aviso('error', 'alerta', `La última sincronización falló: ${e.error}`, boton('Reintentar', sincronizarAhora));
   else if (errores) aviso('error', 'alerta', `La última sincronización terminó con ${plural(errores, 'archivo', 'archivos')} sin copiar.`, boton('Ver detalle', () => verErrores(e)));
+  if (e.riesgo?.pronto) {
+    aviso('error', 'alerta', h('span', null, h('strong', null, plural(e.riesgo.pronto, 'conversación sin respaldar', 'conversaciones sin respaldar')), ` se ${e.riesgo.pronto === 1 ? 'puede' : 'pueden'} borrar de Claude Code en menos de 7 días.`), boton('Sincronizar ahora', sincronizarAhora, true));
+  }
   if (faltantes.length) aviso('alerta', 'alerta', h('span', null, h('strong', null, faltantes.map((d) => d.etiqueta).join(' y ')), ` no está disponible (${faltantes[0].motivo || faltantes[0].ruta}). Esa copia no se va a actualizar.`));
+  if (conProblemas.length) {
+    const n = conProblemas.reduce((s, d) => s + d.comprobacion.problemas, 0);
+    aviso('alerta', 'escudo', h('span', null, 'La última comprobación encontró ', h('strong', null, plural(n, 'archivo con problemas', 'archivos con problemas')), ` en ${conProblemas.map((d) => d.etiqueta).join(' y ')}.`), boton('Ver y reparar', () => navegar('#/ajustes/comprobar')));
+  }
   if (!e.destinos.length) aviso('info', 'info', 'Para empezar, elegí dónde guardar las copias: otro disco, Google Drive, OneDrive o un NAS.', boton('Elegir dónde guardar', () => navegar('#/ajustes/destinos'), true));
-  else if (!ultima) aviso('info', 'info', `Todavía no hay ninguna copia.${e.pendientes ? ` La primera copia son ${tamano(e.pendientes.bytes)} por destino y puede tardar varios minutos.` : ''}`, boton('Hacer la primera copia', sincronizarAhora, true));
+  else if (e.sincronizando || e.comprobando) {
+    // Mientras copia o comprueba, el progreso está abajo a la izquierda: no se ofrece sincronizar.
+  } else if (!ultima) aviso('info', 'info', `Todavía no hay ninguna copia.${e.pendientes ? ` La primera copia son ${tamano(e.pendientes.bytes)} por destino y puede tardar varios minutos.` : ''}`, boton('Hacer la primera copia', sincronizarAhora, true));
   else if (sinCopia.length) aviso('info', 'info', h('span', null, 'Todavía no hay copia en ', h('strong', null, sinCopia.map((d) => d.etiqueta).join(' y ')), '. Se hace en la próxima sincronización.'), boton('Sincronizar', sincronizarAhora));
-  else if (e.pendientes?.conversaciones) aviso('info', 'info', `${plural(e.pendientes.conversaciones, 'conversación tiene', 'conversaciones tienen')} cambios sin respaldar.`, boton('Sincronizar', sincronizarAhora));
+  else if (pend && e.recordatorioDias && diasSin >= e.recordatorioDias && !e.riesgo?.pronto) {
+    aviso('alerta', 'reloj', h('span', null, h('strong', null, `Hace ${plural(diasSin, 'día', 'días')} que no sincronizás`), ` y ${plural(pend, 'conversación tiene', 'conversaciones tienen')} cambios sin respaldar.`), boton('Sincronizar', sincronizarAhora, true));
+  } else if (pend && !e.riesgo?.pronto) aviso('info', 'info', `${plural(pend, 'conversación tiene', 'conversaciones tienen')} cambios sin respaldar.`, boton('Sincronizar', sincronizarAhora));
   return lista.length ? h('div', { class: 'avisos' }, lista) : null;
 }
 
-function irConFiltro(estados) {
-  setFiltros({ ...filtros, estados });
+function irConFiltro(cambios) {
+  setFiltros({ ...filtros, estados: [], fecha: 'cualquiera', carpetas: [], ...cambios });
   navegar('#/conversaciones');
+}
+
+// ---------- Actividad de los últimos 30 días ----------
+
+const claveDia = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+function diasRecientes() {
+  const hoy = new Date();
+  hoy.setHours(12, 0, 0, 0);
+  return Array.from({ length: DIAS_ACTIVIDAD }, (_, i) => new Date(hoy.getTime() - (DIAS_ACTIVIDAD - 1 - i) * DIA));
+}
+
+// Respuestas de Claude por día. Con un índice viejo (sin "actividad") se cuenta la conversación en su último día.
+function actividad(conversaciones) {
+  const dias = diasRecientes();
+  const desde = claveDia(dias[0]);
+  const porDia = new Map(dias.map((d) => [claveDia(d), { respuestas: 0, conversaciones: new Set() }]));
+  const porCarpeta = new Map();
+  let exacta = false;
+  for (const c of conversaciones) {
+    const sumar = (dia, n) => {
+      const x = porDia.get(dia);
+      if (!x) return;
+      x.respuestas += n;
+      x.conversaciones.add(c.clave);
+      const carpeta = nombreCarpeta(c);
+      const p = porCarpeta.get(carpeta) ?? { carpeta, respuestas: 0, conversaciones: new Set() };
+      p.respuestas += n;
+      p.conversaciones.add(c.clave);
+      porCarpeta.set(carpeta, p);
+    };
+    if (c.actividad) {
+      exacta = true;
+      for (const [dia, n] of Object.entries(c.actividad)) if (dia >= desde) sumar(dia, n);
+    } else if (c.hasta) {
+      sumar(claveDia(new Date(c.hasta)), c.respuestas ?? 0);
+    }
+  }
+  const serie = dias.map((d) => ({ fecha: d, ...porDia.get(claveDia(d)) }));
+  // Sin respuestas contadas (conversaciones sin respaldar todavía), se ordena por cantidad de conversaciones.
+  const medida = (p) => p.respuestas || p.conversaciones.size / 1000;
+  const proyectos = [...porCarpeta.values()].sort((a, b) => medida(b) - medida(a)).slice(0, 6);
+  return { serie, proyectos, exacta };
+}
+
+function graficoActividad(serie) {
+  const max = Math.max(1, ...serie.map((d) => d.respuestas));
+  const total = serie.reduce((s, d) => s + d.respuestas, 0);
+  const activos = serie.filter((d) => d.respuestas).length;
+  const conversaciones = new Set(serie.flatMap((d) => [...d.conversaciones])).size;
+  const etiqueta = (d) => d.fecha.toLocaleDateString('es-AR', { weekday: 'short', day: 'numeric', month: 'short' });
+  const globo = h('div', { class: 'globo', hidden: true, role: 'status' });
+  const mostrar = (d, barra) => {
+    globo.replaceChildren(h('strong', null, etiqueta(d)), h('span', null, `${plural(d.respuestas, 'respuesta', 'respuestas')} de Claude`), h('span', null, plural(d.conversaciones.size, 'conversación', 'conversaciones')));
+    globo.hidden = false;
+    const r = barra.getBoundingClientRect();
+    const caja = barra.parentElement.getBoundingClientRect();
+    globo.style.left = `${Math.min(Math.max(0, r.left - caja.left + r.width / 2 - 80), caja.width - 160)}px`;
+  };
+  const barras = h('div', { class: 'barras' }, serie.map((d) => {
+    const barra = h('div', {
+      class: `barra-dia${d.respuestas ? '' : ' vacia'}`,
+      tabindex: '0',
+      'aria-label': `${etiqueta(d)}: ${plural(d.respuestas, 'respuesta', 'respuestas')}`,
+      onmouseenter: (ev) => mostrar(d, ev.currentTarget),
+      onfocus: (ev) => mostrar(d, ev.currentTarget),
+      onmouseleave: () => (globo.hidden = true),
+      onblur: () => (globo.hidden = true),
+    }, h('div', { class: 'barra-dia-valor', style: `height: ${d.respuestas ? Math.max(4, (d.respuestas / max) * 100) : 0}%` }));
+    return barra;
+  }));
+  const corta = (d) => d.toLocaleDateString('es-AR', { day: 'numeric', month: 'short' });
+  return h('div', { class: 'tarjeta actividad' },
+    h('div', { class: 'actividad-cifras' },
+      h('div', null, h('div', { class: 'stat-num' }, numero(total)), h('div', { class: 'stat-etq' }, 'respuestas de Claude')),
+      h('div', null, h('div', { class: 'stat-num' }, numero(activos)), h('div', { class: 'stat-etq' }, 'días con actividad')),
+      h('div', null, h('div', { class: 'stat-num' }, numero(conversaciones)), h('div', { class: 'stat-etq' }, 'conversaciones'))),
+    h('div', { class: 'grafico', role: 'group', 'aria-label': `Respuestas de Claude por día en los últimos ${DIAS_ACTIVIDAD} días` }, globo, barras),
+    h('div', { class: 'eje' }, h('span', null, corta(serie[0].fecha)), h('span', null, corta(serie[Math.floor(serie.length / 2)].fecha)), h('span', null, 'hoy')));
+}
+
+function proyectosActivos(proyectos) {
+  if (!proyectos.length) return h('p', { class: 'tenue' }, `Sin actividad en los últimos ${DIAS_ACTIVIDAD} días.`);
+  const porRespuestas = proyectos.some((p) => p.respuestas);
+  const valor = (p) => (porRespuestas ? p.respuestas : p.conversaciones.size);
+  const max = Math.max(1, ...proyectos.map(valor));
+  return h('div', { class: 'tarjeta proyectos' }, proyectos.map((p) =>
+    h('a', { class: 'proyecto', href: '#/conversaciones', onclick: (ev) => { ev.preventDefault(); irConFiltro({ carpetas: [p.carpeta], fecha: '30' }); } },
+      h('div', { class: 'proyecto-cab' }, h('span', { class: 'proyecto-nombre', title: p.carpeta }, p.carpeta), h('span', { class: 'tenue' }, porRespuestas ? plural(p.conversaciones.size, 'conversación', 'conversaciones') : '')),
+      h('div', { class: 'proyecto-barra' }, h('div', { style: `width: ${Math.max(2, (valor(p) / max) * 100)}%` })),
+      h('div', { class: 'proyecto-valor' }, porRespuestas ? plural(p.respuestas, 'respuesta de Claude', 'respuestas de Claude') : plural(p.conversaciones.size, 'conversación', 'conversaciones')))));
 }
 
 export function pintarInicio(vista) {
@@ -63,6 +176,7 @@ export function pintarInicio(vista) {
   const visibles = est.conversaciones.filter((c) => !c.vacia);
   const borradas = visibles.filter((c) => c.eliminadaEnOrigen && !c.recuperada).length;
   const recuperadas = visibles.filter((c) => c.recuperada).length;
+  const recientes30 = visibles.filter((c) => c.hasta && Date.now() - new Date(c.hasta) < DIAS_ACTIVIDAD * DIA).length;
   const ultima = ultimaSincronizacion(e);
   const a = est.actualizacion;
 
@@ -92,46 +206,64 @@ export function pintarInicio(vista) {
     subtitulo += ` ${plural(e.pendientes.conversaciones, 'conversación tiene', 'conversaciones tienen')} cambios nuevos.`;
   }
 
-  const stat = (n, texto, estados, peligro = false) =>
-    h('a', { href: '#/conversaciones', class: 'stat', onclick: (ev) => { ev.preventDefault(); irConFiltro(estados); } },
-      h('div', { class: `stat-num${peligro && n ? ' peligro' : ''}` }, numero(n)),
+  const stat = (n, texto, alClic, peligro = false) =>
+    h('a', { href: '#/conversaciones', class: 'stat', onclick: (ev) => { ev.preventDefault(); alClic(); } },
+      h('div', { class: `stat-num${peligro && n ? ' peligro' : ''}` }, n == null ? '—' : numero(n)),
       h('div', { class: 'stat-etq' }, texto));
 
-  const recientes = [...visibles].sort((x, y) => (y.hasta || '').localeCompare(x.hasta || '')).slice(0, 6);
+  const recientes = [...visibles].sort((x, y) => (y.hasta || '').localeCompare(x.hasta || '')).slice(0, 8);
+  const act = visibles.length ? actividad(visibles) : null;
+
+  const destinos = h('section', { class: 'seccion' },
+    h('div', { class: 'seccion-cab' }, h('h2', { class: 'seccion-titulo' }, 'Destinos'), h('a', { href: '#/ajustes/destinos' }, e.destinos.length ? 'Administrar' : 'Elegir')),
+    e.destinos.length
+      ? h('div', { class: 'pila' }, e.destinos.map((d) => {
+          const s = estadoDestino(d);
+          const c = d.comprobacion;
+          return h('div', { class: 'tarjeta tarjeta-destino' },
+            icono(iconoDestino(d), 20),
+            h('div', null,
+              h('div', { class: 'nombre' }, d.etiqueta),
+              h('div', { class: 'ruta', title: d.ruta }, d.ruta),
+              c ? h('a', { class: `comprobada${c.problemas ? ' peligro' : ''}`, href: '#/ajustes/comprobar' }, c.problemas ? plural(c.problemas, 'archivo con problemas', 'archivos con problemas') : `Comprobada ${hace(c.reparado ?? c.fecha)}`) : null),
+            h('span', { class: `estado-texto ${s.clase}` }, s.texto));
+        }))
+      : h('div', { class: 'vacio-tarjeta' },
+          icono('escudo', 22),
+          h('p', null, 'Conviene un lugar en otro disco y otro en la nube (Google Drive, OneDrive): así no dependés de una sola copia.'),
+          h('a', { class: 'btn btn-primario', href: '#/ajustes/destinos' }, 'Elegir dónde guardar')));
 
   vista.replaceChildren(h('div', { class: 'pagina' },
     h('div', { class: 'barra-superior' },
       h('label', { class: 'campo' }, icono('buscar', 16), buscador, h('kbd', { class: 'kbd' }, 'Ctrl K')),
       a?.hayNueva ? h('button', { type: 'button', class: 'pastilla-version', onclick: abrirModalVersion }, icono('actualizar', 15), `Versión ${a.ultima.version} disponible`) : null),
-    h('div', { class: 'contenido' },
+    h('div', { class: 'contenido ancho' },
       h('header', { class: 'encabezado' }, h('h1', null, titulo), subtitulo ? h('p', null, subtitulo) : null),
       avisos(e),
-      visibles.length ? h('section', { class: 'stats', 'aria-label': 'Resumen' },
-        stat(visibles.length, 'archivadas', []),
-        stat(visibles.length - borradas - recuperadas, 'siguen en Claude', ['claude']),
-        stat(borradas, 'rescatadas tras borrarse', ['borrada'], true),
-        stat(recuperadas, 'recuperadas', ['recuperada'])) : null,
-      recientes.length ? h('section', { class: 'seccion' },
-        h('div', { class: 'seccion-cab' }, h('h2', { class: 'seccion-titulo' }, 'Recientes'), h('a', { href: '#/conversaciones' }, 'Ver todas')),
-        h('div', { class: 'filas' }, recientes.map((c) =>
-          h('a', { class: 'fila', href: rutaConversacion(c.clave) },
-            h('span', { class: 'fila-titulo' }, c.titulo),
-            etiquetasConversacion(c),
-            h('span', { class: 'fila-meta ancha', title: c.cwd || '' }, nombreCarpeta(c)),
-            h('span', { class: 'fila-meta fecha' }, fechaCorta(c.hasta)))))) : null,
-      h('section', { class: 'seccion' },
-        h('div', { class: 'seccion-cab' }, h('h2', { class: 'seccion-titulo' }, 'Destinos'), h('a', { href: '#/ajustes/destinos' }, e.destinos.length ? 'Administrar' : 'Elegir')),
-        e.destinos.length
-          ? h('div', { class: 'grid-2' }, e.destinos.map((d) => {
-              const s = estadoDestino(d);
-              return h('div', { class: 'tarjeta tarjeta-destino' },
-                icono(iconoDestino(d), 20),
-                h('div', null, h('div', { class: 'nombre' }, d.etiqueta), h('div', { class: 'ruta', title: d.ruta }, d.ruta)),
-                h('span', { class: `estado-texto ${s.clase}` }, s.texto));
-            }))
-          : h('div', { class: 'vacio-tarjeta' },
-              icono('escudo', 22),
-              h('p', null, 'Conviene un lugar en otro disco y otro en la nube (Google Drive, OneDrive): así no dependés de una sola copia.'),
-              h('a', { class: 'btn btn-primario', href: '#/ajustes/destinos' }, 'Elegir dónde guardar'))),
+      visibles.length ? h('section', { class: 'stats stats-6', 'aria-label': 'Resumen' },
+        stat(visibles.length, 'archivadas', () => irConFiltro({})),
+        stat(visibles.length - borradas - recuperadas, 'siguen en Claude', () => irConFiltro({ estados: ['claude'] })),
+        stat(borradas, 'rescatadas tras borrarse', () => irConFiltro({ estados: ['borrada'] }), true),
+        stat(recuperadas, 'recuperadas', () => irConFiltro({ estados: ['recuperada'] })),
+        stat(recientes30, `activas en ${DIAS_ACTIVIDAD} días`, () => irConFiltro({ fecha: '30' })),
+        stat(est.archivosCambiados, 'archivos que cambió Claude', () => navegar('#/archivos'))) : null,
+      h('div', { class: 'inicio-grid' },
+        h('div', { class: 'inicio-principal' },
+          act ? h('section', { class: 'seccion' },
+            h('div', { class: 'seccion-cab' }, h('h2', { class: 'seccion-titulo' }, `Actividad · últimos ${DIAS_ACTIVIDAD} días`), act.exacta ? null : h('span', { class: 'tenue', style: 'font-size: 12.5px' }, 'Aproximada hasta la próxima sincronización')),
+            graficoActividad(act.serie)) : null,
+          recientes.length ? h('section', { class: 'seccion' },
+            h('div', { class: 'seccion-cab' }, h('h2', { class: 'seccion-titulo' }, 'Recientes'), h('a', { href: '#/conversaciones' }, 'Ver todas')),
+            h('div', { class: 'filas' }, recientes.map((c) =>
+              h('a', { class: 'fila', href: rutaConversacion(c.clave) },
+                h('span', { class: 'fila-titulo' }, c.titulo),
+                etiquetasConversacion(c),
+                h('span', { class: 'fila-meta ancha', title: c.cwd || '' }, nombreCarpeta(c)),
+                h('span', { class: 'fila-meta fecha' }, fechaCorta(c.hasta)))))) : null),
+        h('aside', { class: 'inicio-lateral' },
+          destinos,
+          act ? h('section', { class: 'seccion' },
+            h('div', { class: 'seccion-cab' }, h('h2', { class: 'seccion-titulo' }, 'Proyectos más activos')),
+            proyectosActivos(act.proyectos)) : null)),
       h('p', { class: 'nota-pie' }, 'Solo copia: nunca borra nada de tus destinos. Si borrás un chat en Claude, acá queda marcado como "Borrada en Claude"; lo que se borre antes de sincronizar no se puede rescatar.'))));
 }
