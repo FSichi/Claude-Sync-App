@@ -9,11 +9,13 @@ import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { RAIZ_APP, CARPETA_DATOS, VERSION, cargarConfig, rutaConfig, fuenteViva, fuenteApp } from './config.js';
+import { RAIZ_APP, CARPETA_DATOS, VERSION, cargarConfig, rutaConfig, fuenteViva, fuenteApp, fuenteDeLaApp, fuenteDeLaConfiguracion } from './config.js';
 import { sincronizar, sincronizando, listarFuente } from './sincronizar.js';
 import { cargarManifiesto, estadoDestino, leerJson, rutaEnDestino } from './archivos.js';
 import { rutaIndice, clasificarRuta, leerTitulosApp, carpetaDeSesion } from './indice.js';
-import { analizar, aMarkdown, tituloDe, leerLineaEn, imagenesDeLinea, sinBase64, fechaLocal } from './parser.js';
+import { analizar, aMarkdown, tituloDe, leerLineaEn, imagenesDeLinea, sinBase64, fechaLocal, claveArchivo } from './parser.js';
+import { indiceDeArchivos, lineaDeTiempo } from './historial.js';
+import { comprobar, reparar, comprobando, rutaComprobacion } from './comprobar.js';
 import {
   validarDestinoNuevo, guardarConfig, leerDestinosCrudos, sugerirDestinos, listarCarpetas, crearAccesoDirecto, etiquetaDestino, esDriveEnStreaming,
 } from './destinos.js';
@@ -40,7 +42,7 @@ const iConfig = process.argv.indexOf('--config');
 const RUTA_CONFIG = rutaConfig(iConfig > 0 ? process.argv[iConfig + 1] : undefined);
 let config = cargarConfig(RUTA_CONFIG);
 const URL_APP = `http://127.0.0.1:${config.puerto}/`;
-const estado = { progreso: null, ultimo: null, error: null };
+const estado = { progreso: null, ultimo: null, error: null, comprobacion: null, errorComprobacion: null };
 let ultimoLatido = Date.now();
 
 class ErrorHttp extends Error {
@@ -109,6 +111,7 @@ async function infoDestinos() {
     config.destinos.map(async (ruta) => {
       const e = await estadoDestino(ruta);
       const ultima = e.disponible ? await ultimaLineaJson(path.join(ruta, '_estado', 'registro.jsonl')) : null;
+      const c = e.disponible ? await leerJson(rutaComprobacion(ruta), null) : null;
       return {
         ruta,
         etiqueta: etiquetaDestino(ruta),
@@ -119,6 +122,11 @@ async function infoDestinos() {
         ultimaSync: ultima?.fin ?? null,
         conversaciones: ultima?.conversaciones ?? null,
         erroresUltima: ultima?.errores?.length ?? 0,
+        comprobacion: c && {
+          fecha: c.fecha, fondo: c.fondo, archivos: c.archivos, bytes: c.bytes, reparado: c.reparado ?? null,
+          problemas: c.totalProblemas ?? c.problemas.length,
+          alSincronizar: c.problemas.filter((p) => p.alSincronizar).length,
+        },
       };
     }),
   );
@@ -127,14 +135,14 @@ async function infoDestinos() {
 let cacheIndice = { ruta: null, mtimeMs: 0, datos: null };
 async function indice() {
   const dest = await destinoPrincipal();
-  if (!dest) return { dest: null, conversaciones: {} };
+  if (!dest) return { dest: null, conversaciones: {}, auxiliares: {} };
   const ruta = rutaIndice(dest);
   const st = await fsp.stat(ruta).catch(() => null);
-  if (!st) return { dest, conversaciones: {} };
+  if (!st) return { dest, conversaciones: {}, auxiliares: {} };
   if (cacheIndice.ruta !== ruta || cacheIndice.mtimeMs !== st.mtimeMs) {
     cacheIndice = { ruta, mtimeMs: st.mtimeMs, datos: await leerJson(ruta, { conversaciones: {} }) };
   }
-  return { dest, conversaciones: cacheIndice.datos.conversaciones ?? {} };
+  return { dest, conversaciones: cacheIndice.datos.conversaciones ?? {}, auxiliares: cacheIndice.datos.auxiliares ?? {}, version: cacheIndice.datos.version ?? 1 };
 }
 
 // Lo que cambió en el origen desde la última sincronización del destino principal.
@@ -166,6 +174,28 @@ const titulosVivos = memo(30000, async () => {
 async function infoLimpieza() {
   const ajustes = await leerJson(path.join(os.homedir(), '.claude', 'settings.json'), {});
   return { dias: ajustes.cleanupPeriodDays ?? 30, configurado: ajustes.cleanupPeriodDays != null };
+}
+
+// Claude Code borra las sesiones de ~/.claude/projects que pasan cleanupPeriodDays sin cambios.
+// Solo corren riesgo las que tienen algo sin respaldar: lo ya copiado queda en el archivo.
+const DIA = 86400000;
+const PRONTO = 7 * DIA;
+function venceEn(p, dias) {
+  const viva = fuenteViva(config);
+  return viva && p.fuente.origen === viva.origen ? p.mtimeMs + dias * DIA : null;
+}
+async function riesgo(pend) {
+  if (!pend) return null;
+  const { dias } = await infoLimpieza();
+  let pronto = 0;
+  let proximo = null;
+  for (const p of pend.conversaciones.values()) {
+    const vence = venceEn(p, dias);
+    if (vence == null) continue;
+    if (vence - Date.now() < PRONTO) pronto++;
+    if (proximo == null || vence < proximo) proximo = vence;
+  }
+  return { dias, pronto, proximo: proximo == null ? null : new Date(proximo).toISOString() };
 }
 
 // ---------- Conversaciones ----------
@@ -245,10 +275,17 @@ async function listaConversaciones() {
   const { dest, conversaciones } = await indice();
   const pend = sincronizando() ? { conversaciones: new Map() } : await pendientes();
   const titulos = await titulosVivos();
+  const { dias } = await infoLimpieza();
+  const vence = (clave) => {
+    const p = pend.conversaciones.get(clave);
+    const t = p ? venceEn(p, dias) : null;
+    return t == null ? null : new Date(t).toISOString();
+  };
   const lista = [];
   for (const c of Object.values(conversaciones)) {
-    const { primerPrompt, ultimoPrompt, tituloPropio, tituloIA, resumen, ...resto } = c;
-    lista.push({ ...resto, primerPrompt: primerPrompt?.slice(0, 200) ?? null, pendiente: pend.conversaciones.has(c.clave) });
+    const { primerPrompt, ultimoPrompt, tituloPropio, tituloIA, resumen, archivos, uso, ...resto } = c;
+    const cambiados = (archivos ?? []).filter((a) => a.editado || a.escrito).length;
+    lista.push({ ...resto, primerPrompt: primerPrompt?.slice(0, 200) ?? null, pendiente: pend.conversaciones.has(c.clave), vence: vence(c.clave), archivosCambiados: cambiados });
   }
   for (const [clave, p] of pend.conversaciones) {
     if (conversaciones[clave]) continue;
@@ -257,10 +294,115 @@ async function listaConversaciones() {
     lista.push({
       clave, id, proyecto: p.proyecto, cwd: app?.cwd ?? null, recuperada: p.fuente.recuperada,
       titulo: app?.titulo ?? 'Sin respaldar todavía', tituloOrigen: app?.titulo ? 'app' : 'ninguno',
-      hasta: new Date(p.mtimeMs).toISOString(), tamano: p.size, pendiente: true, soloEnClaude: true, vacia: false,
+      hasta: new Date(p.mtimeMs).toISOString(), tamano: p.size, pendiente: true, soloEnClaude: true, vacia: false, vence: vence(clave),
     });
   }
   return { destino: dest, conversaciones: lista };
+}
+
+// ---------- Archivos que tocó Claude ----------
+
+let cacheArchivos = { datos: null, mapa: new Map() };
+async function mapaDeArchivos() {
+  const ind = await indice();
+  if (!ind.dest) return { ...ind, mapa: new Map() };
+  if (cacheArchivos.datos !== cacheIndice.datos) cacheArchivos = { datos: cacheIndice.datos, mapa: indiceDeArchivos(ind.conversaciones, ind.auxiliares) };
+  return { ...ind, mapa: cacheArchivos.mapa };
+}
+
+const resumenArchivo = (a) => ({ clave: a.clave, ruta: a.ruta, leido: a.leido, escrito: a.escrito, editado: a.editado, checkpoint: a.checkpoint, ultima: a.ultima, conversaciones: a.conversaciones.length });
+const normalizarRuta = (s) => normalizar(s).replace(/\\/g, '/');
+
+async function listaArchivos(consulta, todos) {
+  const { mapa, version, conversaciones } = await mapaDeArchivos();
+  const q = normalizarRuta((consulta ?? '').trim());
+  const salida = [];
+  for (const a of mapa.values()) {
+    if (!todos && !a.editado && !a.escrito && !a.checkpoint) continue;
+    if (q && !normalizarRuta(a.ruta).includes(q)) continue;
+    salida.push(resumenArchivo(a));
+  }
+  salida.sort((x, y) => (y.ultima ?? '').localeCompare(x.ultima ?? ''));
+  // Con un índice de una versión anterior todavía no hay datos de archivos: se arman en la próxima sincronización.
+  const faltaIndice = version < 2 && Object.keys(conversaciones).length > 0;
+  return { total: salida.length, archivos: salida.slice(0, 300), faltaIndice };
+}
+
+async function archivosDeConversacion(clave) {
+  validarClave(clave);
+  const { mapa } = await mapaDeArchivos();
+  const salida = [];
+  for (const a of mapa.values()) {
+    const c = a.conversaciones.find((x) => x.clave === clave);
+    if (c) salida.push({ ...resumenArchivo(a), leido: c.leido, escrito: c.escrito, editado: c.editado, ultima: c.ultima });
+  }
+  return salida.sort((x, y) => y.editado + y.escrito - (x.editado + x.escrito) || (y.ultima ?? '').localeCompare(x.ultima ?? ''));
+}
+
+function carpetasDeCheckpoints(dest) {
+  const f = config.fuentes.find((x) => path.basename(x.origen).toLowerCase() === 'file-history');
+  return f ? [rutaEnDestino(dest, f.destino), f.origen] : [];
+}
+
+const cacheHistorial = new Map();
+async function historialDe(clave) {
+  const { dest, mapa } = await mapaDeArchivos();
+  const archivo = typeof clave === 'string' ? mapa.get(claveArchivo(clave)) : null;
+  if (!archivo) throw new ErrorHttp(404, 'Ese archivo no aparece en ninguna conversación archivada.');
+  const k = `${archivo.clave}|${cacheIndice.mtimeMs}`;
+  let p = cacheHistorial.get(k);
+  if (!p) {
+    p = lineaDeTiempo(archivo, { dest, carpetasCheckpoints: carpetasDeCheckpoints(dest) });
+    p.catch(() => cacheHistorial.delete(k));
+    cacheHistorial.set(k, p);
+    while (cacheHistorial.size > 4) cacheHistorial.delete(cacheHistorial.keys().next().value);
+  }
+  return { archivo, ...(await p) };
+}
+
+async function versionDe(clave, n) {
+  const h = await historialDe(clave);
+  const v = n === 'disco' ? h.enDisco : h.versiones[Number(n)];
+  if (!v || v.texto == null) throw new ErrorHttp(404, 'Esa versión no se puede mostrar.');
+  return { archivo: h.archivo, version: v };
+}
+
+// ---------- Comprobar copias ----------
+
+const fuentesConApp = () => [...config.fuentes, fuenteDeLaApp(), fuenteDeLaConfiguracion(config)];
+
+function iniciarComprobacion({ destinos, fondo }) {
+  if (sincronizando()) throw new ErrorHttp(409, 'Esperá a que termine la sincronización.');
+  if (comprobando()) throw new ErrorHttp(409, 'Ya hay una comprobación en curso.');
+  config = cargarConfig(RUTA_CONFIG);
+  const indices = Array.isArray(destinos) && destinos.length ? destinos : config.destinos.map((_, i) => i);
+  const lista = indices.map((i) => config.destinos[i]).filter(Boolean).map((ruta) => ({ ruta, fondo: Boolean(fondo) }));
+  if (!lista.length) throw new ErrorHttp(400, 'No hay destinos para comprobar.');
+  estado.errorComprobacion = null;
+  estado.comprobacion = { fase: 'comprobando', destino: lista[0].ruta, fondo: Boolean(fondo), hechos: 0, total: 0 };
+  comprobar(lista, fuentesConApp(), { onProgreso: (p) => (estado.comprobacion = p) })
+    .then((r) => log('Comprobación terminada', r.map((d) => ({ destino: d.destino, fondo: d.fondo, archivos: d.archivos, problemas: d.totalProblemas ?? 0 }))))
+    .catch((e) => {
+      estado.errorComprobacion = e.message;
+      log(e);
+    })
+    .finally(() => (estado.comprobacion = null));
+}
+
+function iniciarReparacion(i) {
+  if (sincronizando() || comprobando()) throw new ErrorHttp(409, 'Esperá a que termine lo que está en curso.');
+  config = cargarConfig(RUTA_CONFIG);
+  const dest = config.destinos[i];
+  if (!dest) throw new ErrorHttp(400, 'Destino inválido.');
+  estado.errorComprobacion = null;
+  estado.comprobacion = { fase: 'reparando', destino: dest, hechos: 0, total: 0 };
+  reparar(dest, config.destinos.filter((d) => d !== dest), fuentesConApp(), { onProgreso: (p) => (estado.comprobacion = p) })
+    .then((r) => log('Reparación terminada', dest, r))
+    .catch((e) => {
+      estado.errorComprobacion = e.message;
+      log(e);
+    })
+    .finally(() => (estado.comprobacion = null));
 }
 
 async function subagentes(clave) {
@@ -415,6 +557,11 @@ async function cambiarAjustes(datos) {
     cambios.nombreUsuario = limpio;
   }
   if (datos.buscarActualizaciones !== undefined) cambios.buscarActualizaciones = Boolean(datos.buscarActualizaciones);
+  if (datos.recordatorioDias !== undefined) {
+    const n = Number(datos.recordatorioDias);
+    if (!Number.isInteger(n) || n < 0 || n > 60) throw new ErrorHttp(422, 'Elegí entre 0 y 60 días.');
+    cambios.recordatorioDias = n;
+  }
   if (!Object.keys(cambios).length) throw new ErrorHttp(400, 'No hay nada para cambiar.');
   config = cargarConfig(RUTA_CONFIG);
   await guardarConfig(config.archivo, cambios, path.join(CARPETA_LOCAL, 'config-anteriores'));
@@ -431,6 +578,7 @@ async function novedades() {
 
 function iniciarSincronizacion() {
   if (sincronizando()) throw new ErrorHttp(409, 'Ya hay una sincronización en curso.');
+  if (comprobando()) throw new ErrorHttp(409, 'Esperá a que termine la comprobación de las copias.');
   config = cargarConfig(RUTA_CONFIG);
   if (!config.destinos.length) throw new ErrorHttp(409, 'Primero elegí dónde guardar las copias (Ajustes → Destinos).');
   estado.error = null;
@@ -543,6 +691,11 @@ async function manejar(req, res) {
         ultimo,
         destinos: await infoDestinos(),
         pendientes: pend && { archivos: pend.archivos, bytes: pend.bytes, conversaciones: pend.conversaciones.size },
+        riesgo: await riesgo(pend),
+        recordatorioDias: config.recordatorioDias,
+        comprobando: comprobando(),
+        progresoComprobacion: estado.comprobacion,
+        errorComprobacion: estado.errorComprobacion,
         limpieza: await infoLimpieza(),
         fuentes: config.fuentes.map((f) => ({ nombre: f.nombre, origen: f.origen, destino: f.destino })),
         nombreUsuario: config.nombreUsuario,
@@ -655,7 +808,56 @@ async function manejar(req, res) {
 
     case 'POST /api/ajustes':
       await cambiarAjustes(await cuerpo(req));
-      return json(res, 200, { nombreUsuario: config.nombreUsuario, buscarActualizaciones: config.buscarActualizaciones });
+      return json(res, 200, { nombreUsuario: config.nombreUsuario, buscarActualizaciones: config.buscarActualizaciones, recordatorioDias: config.recordatorioDias });
+
+    case 'GET /api/archivos':
+      return json(res, 200, await listaArchivos(q('q'), q('todos') === '1'));
+
+    case 'GET /api/archivos-de':
+      return json(res, 200, await archivosDeConversacion(q('clave')));
+
+    case 'GET /api/archivo': {
+      const h = await historialDe(q('clave'));
+      const { conversaciones } = await indice();
+      return json(res, 200, {
+        archivo: { ...resumenArchivo(h.archivo), conversaciones: h.archivo.conversaciones.map(({ rels, ...c }) => ({ ...c, titulo: conversaciones[c.clave]?.titulo ?? c.titulo })) },
+        versiones: h.versiones.map(({ texto, ...v }) => ({ ...v, disponible: texto != null, tamano: texto == null ? null : Buffer.byteLength(texto), lineas: texto == null ? null : texto.split('\n').length })),
+        enDisco: h.enDisco && { ts: h.enDisco.ts, tamano: h.enDisco.tamano, coincide: h.enDisco.coincide, disponible: h.enDisco.texto != null },
+      });
+    }
+
+    case 'GET /api/archivo/version': {
+      const { version } = await versionDe(q('clave'), q('n'));
+      return json(res, 200, { texto: version.texto });
+    }
+
+    case 'GET /api/archivo/descargar': {
+      const { archivo, version } = await versionDe(q('clave'), q('n'));
+      const ext = path.extname(archivo.ruta);
+      const base = path.basename(archivo.ruta, ext);
+      const cuando = fechaLocal(version.ts).replace(':', '');
+      const nombre = `${base} (${q('n') === 'disco' ? 'en tu PC' : `versión ${cuando}`})${ext}`.replace(/[\\/:*?"<>|\r\n]+/g, ' ');
+      res.writeHead(200, {
+        'Content-Type': 'application/octet-stream',
+        'Content-Disposition': `attachment; filename="archivo${ext.replace(/[^\w.]/g, '')}"; filename*=UTF-8''${encodeURIComponent(nombre)}`,
+        ...SEGURIDAD,
+      });
+      return res.end(version.texto);
+    }
+
+    case 'POST /api/comprobar':
+      iniciarComprobacion(await cuerpo(req));
+      return json(res, 202, { ok: true });
+
+    case 'POST /api/reparar':
+      iniciarReparacion(Number((await cuerpo(req)).destino));
+      return json(res, 202, { ok: true });
+
+    case 'GET /api/comprobacion': {
+      const dest = config.destinos[Number(q('destino'))];
+      if (!dest) throw new ErrorHttp(400, 'Destino inválido.');
+      return json(res, 200, (await leerJson(rutaComprobacion(dest), null)) ?? { problemas: [] });
+    }
 
     case 'GET /api/actualizacion': {
       const forzar = q('forzar') === '1';

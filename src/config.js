@@ -112,6 +112,8 @@ export function cargarConfig(archivo = rutaConfig()) {
     puerto: crudo.puerto ?? 47821,
     nombreUsuario: crudo.nombreUsuario ?? 'Vos',
     buscarActualizaciones: crudo.buscarActualizaciones !== false,
+    // Avisar si pasan más de estos días sin sincronizar y hay cambios (0: no avisar).
+    recordatorioDias: Number.isInteger(crudo.recordatorioDias) && crudo.recordatorioDias >= 0 ? crudo.recordatorioDias : 3,
     destinos: (crudo.destinos ?? []).map((d) => path.resolve(expandir(d))),
     fuentes,
   };
