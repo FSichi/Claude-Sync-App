@@ -1,8 +1,9 @@
 name: Release
 
 # Al subir un tag vX.Y.Z: tests, instalador, prueba de instalación y release público con el Setup.exe.
-#   1. Subí "version" en package.json (por ejemplo 1.2.0) y mergealo a main.
+#   1. Subí "version" en package.json (por ejemplo 1.2.0), sumá "## [1.2.0]" al CHANGELOG.md y mergealo a main.
 #   2. git tag v1.2.0 && git push origin v1.2.0
+# Las notas del release salen del CHANGELOG.md; la app las muestra al avisar que hay una versión nueva.
 on:
   push:
     tags: ['v*']
@@ -13,11 +14,12 @@ permissions:
 jobs:
   release:
     runs-on: windows-latest
+    timeout-minutes: 20
     env:
       TAG: ${{ github.ref_name }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
       - run: npm test
@@ -29,6 +31,9 @@ jobs:
           $paquete = (Get-Content package.json -Raw | ConvertFrom-Json).version
           if ($version -ne $paquete) { throw "El tag $env:TAG no coincide con la versión de package.json ($paquete)" }
           "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Armar las notas desde el CHANGELOG
+        run: node installer/notas-release.mjs ${{ env.VERSION }} dist/notas.md
 
       - name: Armar el instalador
         shell: pwsh
@@ -47,5 +52,4 @@ jobs:
             "dist/Claude-Archivo-Setup-$env:VERSION.exe" `
             "dist/Claude-Archivo-Setup-$env:VERSION.exe.sha256" `
             --title "Claude Archivo $env:VERSION" `
-            --notes-file installer/notas-release.md `
-            --generate-notes
+            --notes-file dist/notas.md

@@ -56,6 +56,7 @@ Source: "{#SourceDir}\config.predeterminado.json"; DestDir: "{app}"; Flags: igno
 Source: "{#SourceDir}\README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\LEEME.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\CHANGELOG.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\Abrir Claude Archivo.cmd"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#NodeDir}\node.exe"; DestDir: "{app}\node"; Flags: ignoreversion
 Source: "{#NodeDir}\LICENSE"; DestDir: "{app}\node"; Flags: ignoreversion
@@ -66,3 +67,13 @@ Name: "{autodesktop}\Claude Archivo"; Filename: "{sys}\conhost.exe"; Parameters:
 
 [Run]
 Filename: "{sys}\conhost.exe"; Parameters: "{#Lanzador}"; WorkingDir: "{app}"; Description: "Abrir Claude Archivo"; Flags: postinstall nowait skipifsilent
+; Cuando la propia app se actualiza, la vuelve a abrir al terminar (ver AbrirAlActualizar).
+Filename: "{sys}\conhost.exe"; Parameters: "{#Lanzador}"; WorkingDir: "{app}"; Flags: nowait; Check: AbrirAlActualizar
+
+[Code]
+// La app se actualiza con una instalación silenciosa y /ABRIR=si. Las demás instalaciones silenciosas
+// (el CI, una instalación desatendida) no tienen que dejar la app abierta.
+function AbrirAlActualizar: Boolean;
+begin
+  Result := WizardSilent and (ExpandConstant('{param:ABRIR|no}') = 'si');
+end;

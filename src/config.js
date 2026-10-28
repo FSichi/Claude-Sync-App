@@ -111,6 +111,7 @@ export function cargarConfig(archivo = rutaConfig()) {
     archivo,
     puerto: crudo.puerto ?? 47821,
     nombreUsuario: crudo.nombreUsuario ?? 'Vos',
+    buscarActualizaciones: crudo.buscarActualizaciones !== false,
     destinos: (crudo.destinos ?? []).map((d) => path.resolve(expandir(d))),
     fuentes,
   };

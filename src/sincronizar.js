@@ -42,8 +42,9 @@ export async function listarFuente(fuente, rutasIgnoradas = []) {
       errores.push({ ruta: dir, error: e.message });
       return;
     }
-    for (const e of entradas) {
-      if (fuente.excluir.includes(e.name.toLowerCase()) || e.name.endsWith(SUFIJO_TEMP)) continue;
+    // Todo en paralelo: con miles de archivos, de a uno tarda varios segundos.
+    await Promise.all(entradas.map(async (e) => {
+      if (fuente.excluir.includes(e.name.toLowerCase()) || e.name.endsWith(SUFIJO_TEMP)) return;
       const abs = path.join(dir, e.name);
       const rel = `${relDir}/${e.name}`;
       // Los enlaces simbólicos y las junctions se ignoran para no entrar en bucles.
@@ -57,9 +58,10 @@ export async function listarFuente(fuente, rutasIgnoradas = []) {
           errores.push({ ruta: abs, error: err.message });
         }
       }
-    }
+    }));
   };
   await recorrer(fuente.origen, fuente.destino);
+  archivos.sort((a, b) => (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0));
   return { disponible: true, archivos, errores };
 }
 

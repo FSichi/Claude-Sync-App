@@ -17,6 +17,8 @@ import { analizar, aMarkdown, tituloDe, leerLineaEn, imagenesDeLinea, sinBase64,
 import {
   validarDestinoNuevo, guardarConfig, leerDestinosCrudos, sugerirDestinos, listarCarpetas, crearAccesoDirecto, etiquetaDestino, esDriveEnStreaming,
 } from './destinos.js';
+import { buscarActualizacion, actualizar, estadoActualizacion, estaInstalada, URL_RELEASES } from './actualizaciones.js';
+import { parseChangelog } from './changelog.js';
 
 const MODO_APP = process.argv.includes('--abrir');
 const TOKEN = crypto.randomBytes(18).toString('hex');
@@ -405,11 +407,26 @@ async function cambiarDestinos({ accion, ruta, indice }) {
   log('Destinos cambiados', accion, config.destinos);
 }
 
-async function cambiarNombre(nombre) {
-  const limpio = String(nombre ?? '').replace(/\s+/g, ' ').trim();
-  if (!limpio || limpio.length > 40) throw new ErrorHttp(422, 'Escribí un nombre de hasta 40 letras.');
-  await guardarConfig(config.archivo, { nombreUsuario: limpio }, path.join(CARPETA_LOCAL, 'config-anteriores'));
+async function cambiarAjustes(datos) {
+  const cambios = {};
+  if (datos.nombreUsuario !== undefined) {
+    const limpio = String(datos.nombreUsuario ?? '').replace(/\s+/g, ' ').trim();
+    if (!limpio || limpio.length > 40) throw new ErrorHttp(422, 'Escribí un nombre de hasta 40 letras.');
+    cambios.nombreUsuario = limpio;
+  }
+  if (datos.buscarActualizaciones !== undefined) cambios.buscarActualizaciones = Boolean(datos.buscarActualizaciones);
+  if (!Object.keys(cambios).length) throw new ErrorHttp(400, 'No hay nada para cambiar.');
   config = cargarConfig(RUTA_CONFIG);
+  await guardarConfig(config.archivo, cambios, path.join(CARPETA_LOCAL, 'config-anteriores'));
+  config = cargarConfig(RUTA_CONFIG);
+}
+
+async function novedades() {
+  try {
+    return parseChangelog(await fsp.readFile(path.join(RAIZ_APP, 'CHANGELOG.md'), 'utf8'));
+  } catch {
+    return [];
+  }
 }
 
 function iniciarSincronizacion() {
@@ -437,7 +454,15 @@ function iniciarSincronizacion() {
 
 // ---------- HTTP ----------
 
-const TIPOS = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' };
+const TIPOS = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+  '.png': 'image/png',
+  '.woff2': 'font/woff2',
+};
 const SEGURIDAD = {
   'Content-Security-Policy': "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'",
   'X-Content-Type-Options': 'nosniff',
@@ -462,15 +487,21 @@ async function cuerpo(req) {
   }
 }
 
-async function servirEstatico(res, nombre) {
-  const ruta = path.join(RAIZ_APP, 'ui', nombre);
-  let contenido = await fsp.readFile(ruta);
-  if (nombre === 'index.html') contenido = contenido.toString('utf8').replace('__TOKEN__', TOKEN);
-  res.writeHead(200, { 'Content-Type': TIPOS[path.extname(nombre)] ?? 'application/octet-stream', 'Cache-Control': 'no-store', ...SEGURIDAD });
+// Sirve solo archivos de ui/ con extensiones conocidas, sin salir de esa carpeta.
+const CARPETA_UI = path.join(RAIZ_APP, 'ui');
+async function servirEstatico(res, rel) {
+  const ruta = path.resolve(CARPETA_UI, rel);
+  if (!ruta.startsWith(CARPETA_UI + path.sep) || !TIPOS[path.extname(ruta).toLowerCase()]) return json(res, 404, { error: 'No existe.' });
+  let contenido;
+  try {
+    contenido = await fsp.readFile(ruta);
+  } catch {
+    return json(res, 404, { error: 'No existe.' });
+  }
+  if (rel === 'index.html') contenido = contenido.toString('utf8').replace('__TOKEN__', TOKEN);
+  res.writeHead(200, { 'Content-Type': TIPOS[path.extname(ruta).toLowerCase()], 'Cache-Control': 'no-store', ...SEGURIDAD });
   res.end(contenido);
 }
-
-const ESTATICOS = new Set(['index.html', 'app.js', 'estilos.css', 'icono.svg']);
 
 async function manejar(req, res) {
   const url = new URL(req.url, URL_APP);
@@ -479,9 +510,14 @@ async function manejar(req, res) {
 
   if (url.pathname === '/api/ping') return json(res, 200, { app: 'claude-archivo' });
   if (!url.pathname.startsWith('/api/')) {
-    const nombre = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
-    if (req.method !== 'GET' || !ESTATICOS.has(nombre)) return json(res, 404, { error: 'No existe.' });
-    return servirEstatico(res, nombre);
+    if (req.method !== 'GET') return json(res, 404, { error: 'No existe.' });
+    let rel;
+    try {
+      rel = url.pathname === '/' ? 'index.html' : decodeURIComponent(url.pathname.slice(1));
+    } catch {
+      return json(res, 404, { error: 'No existe.' });
+    }
+    return servirEstatico(res, rel);
   }
   if (req.headers['x-token'] !== TOKEN && url.searchParams.get('t') !== TOKEN) return json(res, 403, { error: 'Token inválido.' });
   ultimoLatido = Date.now();
@@ -493,7 +529,8 @@ async function manejar(req, res) {
       return json(res, 200, { ok: true });
 
     case 'GET /api/estado': {
-      const pend = sincronizando() ? null : await pendientes();
+      // No hace esperar a la interfaz: si contar lo pendiente tarda, lo informa en la consulta siguiente.
+      const pend = sincronizando() ? null : await Promise.race([pendientes(), new Promise((r) => setTimeout(() => r(null), 1500))]);
       const ultimo = estado.ultimo && {
         fecha: estado.ultimo.fecha,
         destinos: estado.ultimo.destinos.map((d) => ({ destino: d.destino, disponible: d.disponible, motivo: d.motivo, nuevos: d.nuevos, agregados: d.agregados, reemplazados: d.reemplazados, versionados: d.versionados, eliminadosEnOrigen: d.eliminadosEnOrigen, bytes: d.bytes, errores: d.errores.slice(0, 50) })),
@@ -510,6 +547,11 @@ async function manejar(req, res) {
         fuentes: config.fuentes.map((f) => ({ nombre: f.nombre, origen: f.origen, destino: f.destino })),
         nombreUsuario: config.nombreUsuario,
         version: VERSION,
+        instalada: estaInstalada(),
+        buscarActualizaciones: config.buscarActualizaciones,
+        actualizacion: estadoActualizacion.fase ? { ...estadoActualizacion } : null,
+        releases: URL_RELEASES,
+        carpetaDatos: CARPETA_LOCAL,
         configuracion: config.archivo,
         log: ARCHIVO_LOG,
       });
@@ -588,6 +630,8 @@ async function manejar(req, res) {
         abrirEnExplorador(config.archivo, true);
       } else if (datos.que === 'log') {
         abrirEnExplorador(ARCHIVO_LOG, true);
+      } else if (datos.que === 'datos') {
+        abrirEnExplorador(CARPETA_LOCAL, false);
       } else {
         const { abs } = await resolver(datos.clave);
         abrirEnExplorador(abs, true);
@@ -609,9 +653,27 @@ async function manejar(req, res) {
       await cambiarDestinos(await cuerpo(req));
       return json(res, 200, { destinos: await infoDestinos() });
 
-    case 'POST /api/nombre':
-      await cambiarNombre((await cuerpo(req)).nombre);
-      return json(res, 200, { nombreUsuario: config.nombreUsuario });
+    case 'POST /api/ajustes':
+      await cambiarAjustes(await cuerpo(req));
+      return json(res, 200, { nombreUsuario: config.nombreUsuario, buscarActualizaciones: config.buscarActualizaciones });
+
+    case 'GET /api/actualizacion': {
+      const forzar = q('forzar') === '1';
+      if (!config.buscarActualizaciones && !forzar) return json(res, 200, { actual: VERSION, desactivado: true });
+      try {
+        return json(res, 200, await buscarActualizacion({ forzar }));
+      } catch (e) {
+        return json(res, 200, { actual: VERSION, error: `No se pudo consultar GitHub: ${e.message}` });
+      }
+    }
+
+    case 'POST /api/actualizar':
+      if (sincronizando()) throw new ErrorHttp(409, 'Esperá a que termine la sincronización para actualizar.');
+      actualizar(log).catch((e) => log('Actualización fallida:', e.message));
+      return json(res, 202, { ok: true });
+
+    case 'GET /api/novedades':
+      return json(res, 200, { actual: VERSION, versiones: await novedades() });
 
     case 'POST /api/acceso-directo': {
       const d = config.destinos[(await cuerpo(req)).destino];
