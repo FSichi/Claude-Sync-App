@@ -1,0 +1,13 @@
+node_modules/
+*.tmp-sync
+*.log
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Configuración personal: cada usuario tiene la suya en %LOCALAPPDATA%\Claude-Archivo\config.json
+config.json
+
+# Lo que arma installer\armar.ps1
+build/
+dist/

@@ -1,0 +1,21 @@
+{
+  "destinos": [],
+  "fuentes": [
+    { "nombre": "Conversaciones de Claude Code", "origen": "%USERPROFILE%\\.claude\\projects", "destino": "claude/projects", "conversaciones": true },
+    { "nombre": "Checkpoints de archivos editados", "origen": "%USERPROFILE%\\.claude\\file-history", "destino": "claude/file-history" },
+    { "nombre": "Planes", "origen": "%USERPROFILE%\\.claude\\plans", "destino": "claude/plans" },
+    { "nombre": "Tareas", "origen": "%USERPROFILE%\\.claude\\tasks", "destino": "claude/tasks" },
+    { "nombre": "Memoria de subagentes", "origen": "%USERPROFILE%\\.claude\\agent-memory", "destino": "claude/agent-memory" },
+    { "nombre": "Historial de prompts", "origen": "%USERPROFILE%\\.claude\\history.jsonl", "destino": "claude/history.jsonl" },
+    { "nombre": "Instrucciones globales (CLAUDE.md)", "origen": "%USERPROFILE%\\.claude\\CLAUDE.md", "destino": "claude/CLAUDE.md" },
+    { "nombre": "Configuración de Claude Code", "origen": "%USERPROFILE%\\.claude\\settings.json", "destino": "claude/settings.json" },
+    { "nombre": "Skills personales", "origen": "%USERPROFILE%\\.claude\\skills", "destino": "claude/skills" },
+    { "nombre": "Agentes personales", "origen": "%USERPROFILE%\\.claude\\agents", "destino": "claude/agents" },
+    { "nombre": "Comandos personales", "origen": "%USERPROFILE%\\.claude\\commands", "destino": "claude/commands" },
+    { "nombre": "App de escritorio: títulos y estado de las sesiones", "origen": "%APPDATA%\\Claude\\claude-code-sessions", "destino": "app-escritorio/claude-code-sessions", "versiones": false },
+    { "nombre": "App de escritorio: Cowork", "origen": "%APPDATA%\\Claude\\local-agent-mode-sessions", "destino": "app-escritorio/local-agent-mode-sessions", "excluir": ["rpm"] },
+    { "nombre": "App de escritorio: espacios temporales", "origen": "%APPDATA%\\Claude\\scratch-workspaces", "destino": "app-escritorio/scratch-workspaces" }
+  ],
+  "nombreUsuario": "Vos",
+  "puerto": 47821
+}

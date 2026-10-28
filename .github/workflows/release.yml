@@ -1,0 +1,51 @@
+name: Release
+
+# Al subir un tag vX.Y.Z: tests, instalador, prueba de instalación y release público con el Setup.exe.
+#   1. Subí "version" en package.json (por ejemplo 1.2.0) y mergealo a main.
+#   2. git tag v1.2.0 && git push origin v1.2.0
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    env:
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm test
+
+      - name: Verificar que el tag coincide con package.json
+        shell: pwsh
+        run: |
+          $version = $env:TAG.TrimStart('v')
+          $paquete = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ($version -ne $paquete) { throw "El tag $env:TAG no coincide con la versión de package.json ($paquete)" }
+          "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Armar el instalador
+        shell: pwsh
+        run: ./installer/armar.ps1 -Version $env:VERSION
+
+      - name: Instalarlo y abrir la app
+        shell: pwsh
+        run: ./installer/probar.ps1 -Instalador "dist/Claude-Archivo-Setup-$env:VERSION.exe"
+
+      - name: Publicar el release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create $env:TAG `
+            "dist/Claude-Archivo-Setup-$env:VERSION.exe" `
+            "dist/Claude-Archivo-Setup-$env:VERSION.exe.sha256" `
+            --title "Claude Archivo $env:VERSION" `
+            --notes-file installer/notas-release.md `
+            --generate-notes
