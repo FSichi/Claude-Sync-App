@@ -9,9 +9,15 @@ on:
 permissions:
   contents: read
 
+# Un commit nuevo en un PR cancela la corrida anterior de ese PR, que ya no sirve. En main no se cancela nada.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   tests:
     runs-on: windows-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -25,6 +31,7 @@ jobs:
   instalador:
     needs: tests
     runs-on: windows-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - name: Armar el instalador

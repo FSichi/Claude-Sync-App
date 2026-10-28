@@ -101,8 +101,8 @@ export async function actualizar(log = () => {}) {
 
     estadoActualizacion.fase = 'instalando';
     log('Actualizando a', version, 'con', destino);
-    spawn(destino, ['/SILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CLOSEAPPLICATIONS'], { detached: true, stdio: 'ignore' }).unref();
-    // Se cierra para que el instalador pueda reemplazar los archivos; al terminar, la vuelve a abrir.
+    spawn(destino, ['/SILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CLOSEAPPLICATIONS', '/ABRIR=si'], { detached: true, stdio: 'ignore' }).unref();
+    // Se cierra para que el instalador pueda reemplazar los archivos; al terminar, /ABRIR=si la vuelve a abrir.
     setTimeout(() => process.exit(0), 1500);
   } catch (e) {
     estadoActualizacion.error = e.message;
