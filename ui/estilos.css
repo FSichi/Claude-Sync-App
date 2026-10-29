@@ -492,6 +492,7 @@ details.evento-chico .crudo { margin-top: 6px; }
 .fila-agregar .entrada { flex: 1 1 260px; }
 .mensaje { font-size: 13px; color: var(--texto-3); }
 .mensaje.error { color: var(--peligro); }
+.mensaje.ok { color: var(--ok); }
 .fuentes { border: 1px solid var(--borde); border-radius: var(--radio); background: var(--superficie); }
 .fuente { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 4px 20px; padding: 12px 20px; border-bottom: 1px solid var(--divisor); font-size: 13px; }
 .fuente:last-child { border-bottom: 0; }
@@ -564,7 +565,7 @@ details.evento-chico .crudo { margin-top: 6px; }
 .barra-dia-valor { width: 100%; background: var(--acento); border-radius: 4px 4px 0 0; transition: filter 0.12s, opacity 0.12s; }
 .barra-dia:hover .barra-dia-valor, .barra-dia:focus-visible .barra-dia-valor { filter: brightness(1.2); }
 .barras:hover .barra-dia:not(:hover) .barra-dia-valor { opacity: 0.55; }
-.globo { position: absolute; top: -4px; transform: translateY(-100%); width: 160px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--borde-2); background: var(--elevada); box-shadow: var(--sombra); font-size: 12px; color: var(--texto-2); display: flex; flex-direction: column; gap: 2px; pointer-events: none; z-index: 3; }
+.globo { position: absolute; top: -4px; transform: translateY(-100%); width: 180px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--borde-2); background: var(--elevada); box-shadow: var(--sombra); font-size: 12px; color: var(--texto-2); display: flex; flex-direction: column; gap: 2px; pointer-events: none; z-index: 3; }
 .globo strong { color: var(--texto); font-weight: 600; }
 .eje { display: flex; justify-content: space-between; font-size: 11.5px; color: var(--texto-3); }
 .proyectos { padding: 6px 0; }
@@ -606,6 +607,34 @@ a.proyecto:hover { background: var(--hover); color: var(--texto); }
 .explicacion { padding: 16px 18px; display: flex; flex-direction: column; gap: 6px; }
 .explicacion h3 { font-size: 14px; }
 .explicacion p { font-size: 13px; color: var(--texto-2); }
+
+/* ---------- Resúmenes ---------- */
+.resumen { border: 1px solid var(--acento-borde); border-radius: var(--radio); background: var(--acento-suave); padding: 4px 16px; }
+.resumen > summary { list-style: none; display: flex; align-items: center; gap: 8px; padding: 8px 0; cursor: pointer; color: var(--acento-texto); }
+.resumen > summary::-webkit-details-marker { display: none; }
+.resumen > summary > svg:first-child { transition: transform 0.12s; }
+.resumen[open] > summary > svg:first-child { transform: rotate(90deg); }
+.resumen-titulo { font-weight: 600; }
+.resumen .md { padding: 2px 0 10px; color: var(--texto); }
+.resumen .md h3 { font-size: 13px; margin: 12px 0 4px; color: var(--texto-2); text-transform: uppercase; letter-spacing: 0.05em; }
+.resumen-pie { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 0 10px; border-top: 1px solid var(--acento-borde); font-size: 12.5px; }
+.resumen-vacio { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 14px; font-size: 13px; color: var(--texto-2); background: transparent; border-style: dashed; border-color: var(--borde-2); }
+.resumen-vacio > svg { color: var(--acento-texto); }
+.resumen-vacio > span { flex: 1 1 260px; }
+
+/* ---------- Estadísticas ---------- */
+.encabezado-fila { flex-direction: row; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px 24px; }
+.encabezado-fila > div:first-child { display: flex; flex-direction: column; gap: 6px; min-width: 0; flex: 1 1 420px; }
+.grid-2.alineado { align-items: start; gap: 24px; }
+.ver-mas { font-size: 13px; text-decoration: none; align-self: flex-start; }
+.tabla-cont { overflow-x: auto; }
+.tabla { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+.tabla th, .tabla td { padding: 10px 16px; border-bottom: 1px solid var(--divisor); text-align: left; white-space: nowrap; }
+.tabla thead th { font-size: 12px; font-weight: 500; color: var(--texto-3); }
+.tabla tbody th { font-weight: 500; }
+.tabla tbody tr:last-child th, .tabla tbody tr:last-child td { border-bottom: 0; }
+.tabla .num { text-align: right; }
+.tabla tbody tr:hover { background: var(--hover); }
 
 @media (min-width: 1600px) {
   .lista-col { flex-basis: 380px; }

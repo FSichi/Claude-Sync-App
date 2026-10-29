@@ -265,6 +265,108 @@ function destinos() {
   ];
 }
 
+// ---------- Resúmenes ----------
+
+let datosResumenes = null; // /api/resumenes: se pide al entrar y al terminar un lote, no en cada actualización
+const MODELOS = [['haiku', 'Haiku'], ['sonnet', 'Sonnet'], ['opus', 'Opus']];
+
+let cargandoResumenes = false;
+async function cargarResumenes() {
+  if (cargandoResumenes) return;
+  cargandoResumenes = true;
+  try {
+    datosResumenes = await api('/api/resumenes');
+  } catch (e) {
+    datosResumenes = { error: e.message };
+  } finally {
+    cargandoResumenes = false;
+  }
+  if (seccionActual === 'resumenes') repintar();
+}
+
+async function probarClaude(boton, salida) {
+  boton.disabled = true;
+  boton.classList.add('girando');
+  salida.className = 'mensaje';
+  salida.textContent = 'Preguntándole a Claude…';
+  try {
+    const r = await post('/api/resumenes/probar');
+    salida.className = r.ok ? 'mensaje ok' : 'mensaje error';
+    salida.textContent = r.ok ? 'Funciona: Claude respondió.' : r.error;
+  } catch (e) {
+    salida.className = 'mensaje error';
+    salida.textContent = e.message;
+  }
+  boton.disabled = false;
+  boton.classList.remove('girando');
+}
+
+async function lote(cuales) {
+  try {
+    await post('/api/resumir/todas', { cuales });
+    await actualizarEstado();
+  } catch (e) {
+    avisarError(e);
+  }
+}
+
+function resumenesSeccion() {
+  const d = datosResumenes;
+  const t = est.app.resumenes;
+  const cab = cabecera('Resúmenes', 'Claude resume cada conversación: qué se buscaba, qué se hizo, qué se decidió y qué quedó pendiente. El resumen aparece arriba de la conversación, se exporta con ella y entra en la búsqueda.');
+  if (!d) {
+    cargarResumenes();
+    return [cab, h('p', { class: 'sutil' }, 'Cargando…')];
+  }
+  if (d.error) return [cab, h('p', { class: 'mensaje error' }, d.error)];
+  const ocupado = Boolean(t?.enCurso);
+  const salidaPrueba = h('p', { class: 'mensaje', role: 'status' });
+  const modelo = h('div', { class: 'seg', role: 'group', 'aria-label': 'Modelo para los resúmenes' }, MODELOS.map(([id, texto]) => h('button', {
+    type: 'button',
+    'aria-pressed': String((est.app.modeloResumenes ?? d.modelo) === id),
+    onclick: async () => {
+      try {
+        await post('/api/ajustes', { modeloResumenes: id });
+        await actualizarEstado();
+        repintar();
+      } catch (e) {
+        avisarError(e);
+      }
+    },
+  }, texto)));
+  const fraccion = t?.total ? t.hechos / t.total : null;
+  return [
+    cab,
+    h('div', { class: 'lista-ajustes' },
+      h('div', { class: 'ajuste' },
+        h('div', { class: 'ajuste-texto' },
+          h('div', { class: 'titulo' }, 'Claude Code'),
+          h('div', { class: 'desc' }, d.claude ? `${d.claude.version ?? 'Versión desconocida'} · ${d.claude.ruta}` : 'No lo encontré en esta PC. Instalalo desde claude.com/claude-code y volvé a abrir la app.'),
+          salidaPrueba),
+        d.claude ? h('div', { class: 'ajuste-control' }, h('button', { type: 'button', class: 'btn', onclick: (e) => probarClaude(e.currentTarget, salidaPrueba) }, icono('sincronizar', 14), 'Probar')) : null),
+      ajuste('Modelo', 'Haiku es el más rápido y el que menos uso consume. Sonnet y Opus hacen resúmenes más finos.', modelo),
+      h('div', { class: 'ajuste' },
+        h('div', { class: 'ajuste-texto' },
+          h('div', { class: 'titulo' }, `${numero(d.conResumen)} de ${plural(d.total, 'conversación tiene', 'conversaciones tienen')} resumen`),
+          h('div', { class: 'desc' }, d.desactualizados ? `${plural(d.desactualizados, 'tiene', 'tienen')} mensajes nuevos desde que se resumió.` : 'Se resumen de a dos, empezando por las más recientes. Podés cancelar cuando quieras: lo hecho queda guardado.')),
+        h('div', { class: 'ajuste-control' },
+          d.faltan ? h('button', { type: 'button', class: 'btn btn-primario', disabled: ocupado || !d.claude, onclick: () => lote('faltan') }, `Resumir ${d.faltan === 1 ? 'la que falta' : `las ${numero(d.faltan)} que faltan`}`) : null,
+          d.desactualizados ? h('button', { type: 'button', class: 'btn', disabled: ocupado || !d.claude, onclick: () => lote('desactualizados') }, `Actualizar ${d.desactualizados === 1 ? 'la desactualizada' : `las ${numero(d.desactualizados)}`}`) : null))),
+    ocupado ? h('div', { class: 'tarjeta progreso-tarjeta', role: 'status' },
+      h('div', { class: 'sync-estado' }, h('span', { class: 'estado-punto acento' }), h('span', null, `Resumiendo ${numero(t.hechos)} de ${numero(t.total)}`), h('span', { class: 'tenue' }, `${Math.round((fraccion ?? 0) * 100)} %`)),
+      h('div', { class: 'barra' }, h('div', { class: 'barra-relleno', style: `width: ${Math.round((fraccion ?? 0) * 100)}%` })),
+      t.actual?.length ? h('div', { class: 'sync-detalle' }, `Ahora: ${t.actual.join(' · ')}`) : null,
+      t.errores ? h('div', { class: 'sync-detalle' }, `${plural(t.errores, 'no se pudo', 'no se pudieron')} hacer. Último error: ${t.ultimoError}`) : null,
+      h('div', null, h('button', { type: 'button', class: 'btn btn-chico', onclick: () => post('/api/resumir/cancelar').catch(avisarError) }, 'Cancelar'))) : null,
+    t && !t.enCurso ? h('div', { class: `aviso ${t.motivo ? 'error' : t.errores || t.cancelado ? 'alerta' : 'info'}`, role: 'status' },
+      icono(t.motivo ? 'alerta' : 'info', 18),
+      h('div', { class: 'aviso-texto' }, t.motivo
+        ? `Se frenó: ${t.motivo}`
+        : `${t.cancelado ? 'Cancelado. ' : ''}${plural(t.hechos - t.errores, 'resumen hecho', 'resúmenes hechos')}${t.errores ? `, ${plural(t.errores, 'con error', 'con error')}. Último error: ${t.ultimoError}` : '.'}`)) : null,
+    h('p', { class: 'nota-pie' }, 'Cada resumen usa tu cuenta de Claude y cuenta para tus límites de uso, como cualquier conversación: se le manda el texto de la conversación. Nada se resume solo, solo cuando lo pedís. Claude Code corre sin herramientas y sin guardar la sesión, así que no aparece como una conversación nueva.'),
+  ];
+}
+
 // ---------- Qué se copia ----------
 
 function copia() {
@@ -333,7 +435,7 @@ function app() {
       h('div', { class: 'ajuste' }, estadoVersion, h('div', { class: 'ajuste-control' },
         a?.hayNueva ? h('button', { type: 'button', class: 'btn btn-primario', onclick: abrirModalVersion }, icono('actualizar', 15), 'Ver novedades y actualizar') : null,
         buscarAhora)),
-      ajuste('Buscar versiones nuevas al abrir', 'Es lo único que la app consulta en internet: la lista de versiones en GitHub.', automatico)),
+      ajuste('Buscar versiones nuevas al abrir', 'Es lo único que la app consulta por su cuenta en internet: la lista de versiones en GitHub. Los resúmenes que pidas los manda tu Claude Code.', automatico)),
     h('section', { class: 'seccion' },
       h('div', { class: 'seccion-cab' }, h('h2', { class: 'seccion-titulo' }, 'Historial de versiones'), h('a', { href: e.releases, target: '_blank', rel: 'noopener noreferrer' }, 'Ver en GitHub')),
       historial),
@@ -355,7 +457,7 @@ function avanzado() {
   ];
 }
 
-const SECCIONES = { general, destinos, comprobar: comprobacion, copia, app, avanzado };
+const SECCIONES = { general, destinos, comprobar: comprobacion, resumenes: resumenesSeccion, copia, app, avanzado };
 
 function repintar() {
   if (!contenedor || !document.contains(contenedor) || !est.app) return;
@@ -364,6 +466,7 @@ function repintar() {
 
 export function pintarAjustes(vista, seccion) {
   seccionActual = SECCIONES_AJUSTES.some((x) => x.id === seccion) ? seccion : 'general';
+  if (seccionActual === 'resumenes') datosResumenes = null; // al entrar se vuelven a contar
   contenedor = h('div', { class: 'contenido angosto' });
   vista.replaceChildren(h('div', { class: 'pagina', style: 'padding-top: 40px' }, contenedor));
   if (!est.app) {
@@ -376,14 +479,20 @@ export function pintarAjustes(vista, seccion) {
 
 // Si la página se abrió antes de tener el estado, se pinta cuando llega. Comprobar copias muestra el progreso.
 let comprobandoAntes = false;
+let resumiendoAntes = false;
 export function alLlegarEstado() {
+  const resumiendo = Boolean(est.app?.resumenes?.enCurso);
   if (contenedor?.dataset.cargando && est.app) {
     delete contenedor.dataset.cargando;
     repintar();
   } else if (seccionActual === 'comprobar' && (est.app?.comprobando || comprobandoAntes)) {
     repintar();
+  } else if (seccionActual === 'resumenes' && (resumiendo || resumiendoAntes)) {
+    if (resumiendoAntes && !resumiendo) cargarResumenes(); // terminó: se actualizan las cuentas
+    else repintar();
   }
   comprobandoAntes = Boolean(est.app?.comprobando);
+  resumiendoAntes = resumiendo;
 }
 
 export const repintarAjustes = repintar;

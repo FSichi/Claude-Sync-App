@@ -42,11 +42,27 @@ En *Ajustes → Comprobar copias*, cada destino tiene dos comprobaciones:
 
 Si encuentra problemas, **Reparar** busca una copia buena (el original de Claude o el mismo archivo en otro destino) y la copia encima. Antes guarda la dañada en `_versiones\<fecha>_reparacion\`: no se borra nada. Lo que Claude todavía tiene pero cambió se pone al día en la próxima sincronización.
 
+### Resúmenes
+
+Claude puede resumir cada conversación en cuatro partes: una línea con qué se buscaba y cómo terminó, qué se hizo, qué se decidió y qué quedó pendiente.
+
+- **De a una:** arriba de la conversación, **Resumir con Claude** (o en el menú **⋯**). Si después la conversación siguió, el resumen avisa *Hay mensajes nuevos* y se puede actualizar.
+- **Todas juntas:** *Ajustes → Resúmenes* → **Resumir las que faltan** o **Actualizar** las desactualizadas. Va de a dos, de las más nuevas a las más viejas, y se puede cancelar: lo hecho queda guardado. Si Claude Code no tiene la sesión iniciada o llegaste al límite de uso, frena y te dice por qué.
+- **Modelo:** Haiku (el más rápido y el que menos uso consume), Sonnet u Opus.
+
+Los hace el Claude Code de tu PC (`claude -p`), con tu cuenta: cada resumen cuenta para tus límites de uso. Corre sin herramientas, sin servidores MCP y sin guardar la sesión, siempre desde `%LOCALAPPDATA%\Claude-Archivo\resumenes\`, así que no aparece como una conversación nueva. Si Claude Code no tiene la sesión iniciada, abrí una terminal, corré `claude` y entrá con tu cuenta; **Probar** en *Ajustes → Resúmenes* confirma que funciona.
+
+Los resúmenes se guardan en `_estado\resumenes.json` de cada destino, entran en la búsqueda y van al principio del Markdown exportado.
+
+### Estadísticas
+
+*Estadísticas* muestra cuánto trabajó Claude, con los tokens que Claude Code anota en cada respuesta (incluidos los subagentes): en total, generados, leídos de la caché, respuestas, conversaciones y días con actividad. Hay un gráfico por día (30 o 90 días) o por mes (12 meses o todo), el reparto por modelo y por proyecto, las conversaciones que más usaron y una tabla por mes. Son medidas de trabajo, no un costo. Las conversaciones que todavía no se sincronizaron no cuentan.
+
 ### Actualizaciones
 
 Cada vez que se abre, la app busca versiones nuevas en la lista pública de versiones de GitHub. Si hay una, te muestra qué trae y **Actualizar** baja el instalador, comprueba su SHA-256, lo instala y vuelve a abrir la app. Tu configuración y tus copias no se tocan. Mientras sincroniza no se puede actualizar.
 
-En *Ajustes → App* ves tu versión, el historial de cambios y un botón para buscar ahora. Ahí también se apaga la búsqueda automática: la app deja de conectarse a internet.
+En *Ajustes → App* ves tu versión, el historial de cambios y un botón para buscar ahora. Ahí también se apaga la búsqueda automática: la app deja de conectarse a internet (los resúmenes que pidas los sigue mandando tu Claude Code).
 
 ### Destinos
 
@@ -95,7 +111,7 @@ El programa no tiene ninguna instrucción que borre archivos (se puede verificar
   - `texto\INDICE.md`: todas las conversaciones, con enlace a su versión Markdown.
   - `claude\`, `app-escritorio\`: las copias.
   - `_versiones\`: versiones anteriores de archivos que cambiaron, y las copias dañadas que se repararon (`<fecha>_reparacion\`).
-  - `_estado\`: manifiesto, índice, registro de cada sincronización, última comprobación (`comprobacion.json`) y huellas de la comprobación a fondo (`huellas.json`).
+  - `_estado\`: manifiesto, índice, registro de cada sincronización, última comprobación (`comprobacion.json`), huellas de la comprobación a fondo (`huellas.json`) y resúmenes (`resumenes.json`).
   - `_configuracion\config.json`: una copia de tu configuración.
   - `_app\`: una copia del código de la app.
 
@@ -130,13 +146,14 @@ Ojo: las conversaciones son texto plano y pueden tener cualquier cosa que haya a
 | `src\indice.js` | Índice de conversaciones (con los archivos que tocó Claude y los tokens) y textos Markdown. |
 | `src\historial.js` | En qué conversaciones aparece cada archivo y sus versiones: checkpoints, Write y Edit reconstruidos. |
 | `src\comprobar.js` | Comprobación rápida y a fondo de los destinos, y reparación desde una copia buena. |
+| `src\resumenes.js` | Resúmenes con el Claude Code de la PC (`claude -p`, sin herramientas ni sesión guardada). |
 | `src\config.js` | Configuración del usuario: dónde está, cómo se crea la primera vez y cómo se migra. |
 | `src\destinos.js` | Destinos: validar, guardar en `config.json`, sugerir, explorador de carpetas y accesos directos. |
 | `src\servidor.js` | Servidor local (solo `127.0.0.1`, con token por sesión) y ventana. |
 | `src\actualizaciones.js` | Busca versiones nuevas en GitHub, baja el instalador, lo verifica y lo ejecuta. |
 | `src\changelog.js` | Lee `CHANGELOG.md` y las notas de cada versión. |
 | `ui\index.html`, `ui\estilos.css` | Estructura y diseño de la interfaz. |
-| `ui\js\` | Interfaz, un módulo por parte: inicio, conversaciones, lector, archivos, filtros, ajustes, actualizaciones. |
+| `ui\js\` | Interfaz, un módulo por parte: inicio, conversaciones, lector, archivos, estadísticas, gráficos, filtros, ajustes, actualizaciones. |
 | `CHANGELOG.md` | Los cambios de cada versión. La app los muestra y el release de GitHub los usa como notas. |
 | `installer\` | Instalador (Inno Setup) y scripts para armarlo y probarlo. |
 | `.github\workflows\` | CI (tests e instalador en cada PR) y publicación de versiones. |

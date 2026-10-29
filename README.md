@@ -30,7 +30,8 @@ Requisitos: Windows 10 u 11 de 64 bits. No hace falta instalar Node.js: viene in
 - **Archivos:** cada archivo que Claude leyó, escribió o editó, en qué conversaciones aparece y sus versiones (los checkpoints de Claude Code, lo que escribió y lo que se reconstruye de cada edición), aunque ya no esté en tu PC.
 - **Avisa antes de perder algo:** si una conversación sin respaldar está por cumplir el plazo en que Claude Code borra las sesiones, o si pasan días sin sincronizar.
 - **Comprobar copias:** revisa que cada destino tenga todo y sin daños, y repara lo que esté mal con una copia buena, sin borrar nada.
-- **Actividad:** el inicio muestra los últimos 30 días y los proyectos más activos.
+- **Actividad y estadísticas:** el inicio muestra los últimos 30 días y los proyectos más activos; *Estadísticas* tiene los tokens y respuestas por período, modelo, proyecto y conversación.
+- **Resúmenes:** tu Claude Code resume cada conversación (qué se buscaba, qué se hizo, qué se decidió, qué quedó pendiente), solo cuando lo pedís.
 - **Restaurar en Claude:** devuelve una conversación a Claude Code para retomarla con `claude --resume`.
 - **Texto legible:** cada destino tiene las conversaciones en Markdown y un índice (`texto\INDICE.md`), para leerlas sin la app.
 - **Varios destinos:** detecta Google Drive, OneDrive, Dropbox e iCloud. Si el destino es una carpeta sincronizada, la copia se sube sola a la nube.
@@ -41,7 +42,8 @@ El manual completo está en [LEEME.md](LEEME.md).
 ## Privacidad
 
 - Tus conversaciones no salen de tu PC ni de los destinos que elijas. Si elegís una carpeta de Google Drive u OneDrive, ese servicio sube la copia a tu cuenta.
-- La única conexión a internet es para buscar versiones nuevas: cada vez que abrís la app, consulta la lista pública de versiones de este repo en GitHub, sin mandar ningún dato tuyo. Se apaga en **Ajustes → App**.
+- **Resúmenes:** si pedís un resumen, la app le pasa el texto de esa conversación a tu Claude Code, que lo manda a Claude con tu cuenta, como cualquier conversación. Corre sin herramientas y sin guardar la sesión. No pasa nunca solo.
+- La única conexión a internet de la app misma es para buscar versiones nuevas: cada vez que abrís la app, consulta la lista pública de versiones de este repo en GitHub, sin mandar ningún dato tuyo. Se apaga en **Ajustes → App**.
 - La interfaz corre en un servidor local que escucha solo en `127.0.0.1` y pide un token por sesión.
 - No copia credenciales (`.credentials.json`) ni `~\.claude.json`.
 - Las conversaciones son texto plano y pueden tener cualquier cosa que haya aparecido en un chat. Tratá las copias con el mismo cuidado que tu carpeta `.claude`.

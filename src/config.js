@@ -114,6 +114,8 @@ export function cargarConfig(archivo = rutaConfig()) {
     buscarActualizaciones: crudo.buscarActualizaciones !== false,
     // Avisar si pasan más de estos días sin sincronizar y hay cambios (0: no avisar).
     recordatorioDias: Number.isInteger(crudo.recordatorioDias) && crudo.recordatorioDias >= 0 ? crudo.recordatorioDias : 3,
+    // Modelo para los resúmenes que hace Claude Code: haiku, sonnet u opus.
+    modeloResumenes: ['haiku', 'sonnet', 'opus'].includes(crudo.modeloResumenes) ? crudo.modeloResumenes : 'haiku',
     destinos: (crudo.destinos ?? []).map((d) => path.resolve(expandir(d))),
     fuentes,
   };

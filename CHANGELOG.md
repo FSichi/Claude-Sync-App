@@ -2,6 +2,16 @@
 
 Los cambios de cada versión de Claude Archivo. La app muestra esta lista en Ajustes › App, y las novedades de cada versión cuando se actualiza. Las notas de cada release de GitHub salen de acá.
 
+## [1.4.0] - 2026-10-28
+
+### Nuevo
+- **Resúmenes con tu Claude Code**: cada conversación puede tener un resumen con qué se buscaba, qué se hizo, qué se decidió y qué quedó pendiente. Se pide de a una (arriba de la conversación o en el menú ⋯) o todas juntas desde Ajustes › Resúmenes. Aparece arriba de la conversación, se exporta con ella y entra en la búsqueda.
+- **Estadísticas**: tokens y respuestas de los últimos 30 o 90 días, 12 meses o de siempre, por día o por mes, por modelo, por proyecto y por conversación, con un detalle mensual. Incluye lo que hicieron los subagentes.
+
+### Mejoras
+- Desde el gráfico de actividad del inicio se llega a las estadísticas completas.
+- Los números grandes se leen mejor (2.556 M, 345 mil).
+
 ## [1.3.0] - 2026-10-28
 
 ### Nuevo
