@@ -67,6 +67,13 @@ export function nombreModelo(m = '') {
 
 // ---------- Formatos ----------
 export const numero = (n) => (n ?? 0).toLocaleString('es-AR');
+// 980 · 345 mil · 6,9 M · 2.556 M (los miles de millones se muestran en millones, que se leen mejor)
+export function compacto(n = 0) {
+  const f = (x, decimales) => x.toLocaleString('es-AR', { maximumFractionDigits: decimales });
+  if (n >= 1e6) return `${f(n / 1e6, n >= 1e8 ? 0 : 1)} M`;
+  if (n >= 1e3) return `${f(n / 1e3, n >= 1e5 ? 0 : 1)} mil`;
+  return f(n, 0);
+}
 export function tamano(b) {
   if (b == null) return '';
   if (b < 1024 * 1024) return `${Math.max(1, Math.round(b / 1024))} KB`;

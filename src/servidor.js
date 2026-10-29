@@ -16,6 +16,7 @@ import { rutaIndice, clasificarRuta, leerTitulosApp, carpetaDeSesion } from './i
 import { analizar, aMarkdown, tituloDe, leerLineaEn, imagenesDeLinea, sinBase64, fechaLocal, claveArchivo } from './parser.js';
 import { indiceDeArchivos, lineaDeTiempo } from './historial.js';
 import { comprobar, reparar, comprobando, rutaComprobacion } from './comprobar.js';
+import { MODELOS_RESUMEN, buscarClaude, versionDeClaude, preguntarAClaude, resumir, leerResumenes, guardarResumenes, rutaResumenes } from './resumenes.js';
 import {
   validarDestinoNuevo, guardarConfig, leerDestinosCrudos, sugerirDestinos, listarCarpetas, crearAccesoDirecto, etiquetaDestino, esDriveEnStreaming,
 } from './destinos.js';
@@ -42,7 +43,8 @@ const iConfig = process.argv.indexOf('--config');
 const RUTA_CONFIG = rutaConfig(iConfig > 0 ? process.argv[iConfig + 1] : undefined);
 let config = cargarConfig(RUTA_CONFIG);
 const URL_APP = `http://127.0.0.1:${config.puerto}/`;
-const estado = { progreso: null, ultimo: null, error: null, comprobacion: null, errorComprobacion: null };
+const estado = { progreso: null, ultimo: null, error: null, comprobacion: null, errorComprobacion: null, resumenes: null };
+const CARPETA_RESUMENES = path.join(CARPETA_DATOS, 'resumenes');
 let ultimoLatido = Date.now();
 
 class ErrorHttp extends Error {
@@ -270,8 +272,10 @@ async function infoConversacion(clave, abs) {
   const enClaude = (viva && (await existe(viva))) || (restauracion ? await existe(restauracion.jsonl) : false);
   const { archivos, uso, ...resto } = info;
   const tocados = await archivosDeConversacion(clave).catch(() => []);
+  const resumenGuardado = (await resumenes())[clave] ?? null;
   return {
     ...resto,
+    resumenGuardado: resumenGuardado && { ...resumenGuardado, desactualizado: desactualizado(resumenGuardado, info) },
     archivosTocados: tocados.length,
     archivosCambiados: tocados.filter((a) => a.editado || a.escrito).length,
     enClaude,
@@ -284,6 +288,7 @@ async function listaConversaciones() {
   const pend = sincronizando() ? { conversaciones: new Map() } : await pendientes();
   const titulos = await titulosVivos();
   const { dias } = await infoLimpieza();
+  const hechos = await resumenes();
   const vence = (clave) => {
     const p = pend.conversaciones.get(clave);
     const t = p ? venceEn(p, dias) : null;
@@ -296,7 +301,7 @@ async function listaConversaciones() {
     // Respuestas de Claude por día, para el gráfico de actividad del inicio.
     const actividad = {};
     for (const u of uso ?? []) actividad[u.dia] = (actividad[u.dia] ?? 0) + u.respuestas;
-    lista.push({ ...resto, primerPrompt: primerPrompt?.slice(0, 200) ?? null, pendiente: pend.conversaciones.has(c.clave), vence: vence(c.clave), archivosCambiados: cambiados, actividad: uso ? actividad : null });
+    lista.push({ ...resto, primerPrompt: primerPrompt?.slice(0, 200) ?? null, pendiente: pend.conversaciones.has(c.clave), vence: vence(c.clave), archivosCambiados: cambiados, actividad: uso ? actividad : null, conResumen: Boolean(hechos[c.clave]) });
   }
   for (const [clave, p] of pend.conversaciones) {
     if (conversaciones[clave]) continue;
@@ -385,6 +390,128 @@ async function versionDe(clave, n) {
   return { archivo: h.archivo, version: v };
 }
 
+// ---------- Resúmenes con Claude Code ----------
+
+let cacheResumenes = { ruta: null, mtimeMs: 0, datos: {} };
+async function resumenes() {
+  const dest = await destinoPrincipal();
+  if (!dest) return {};
+  const ruta = rutaResumenes(dest);
+  const st = await fsp.stat(ruta).catch(() => null);
+  if (!st) return {};
+  if (cacheResumenes.ruta !== ruta || cacheResumenes.mtimeMs !== st.mtimeMs) cacheResumenes = { ruta, mtimeMs: st.mtimeMs, datos: await leerResumenes(dest) };
+  return cacheResumenes.datos;
+}
+
+const desactualizado = (r, c) => Boolean(r && c?.hasta && r.hasta && c.hasta > r.hasta);
+const versionClaude = memo(10 * 60 * 1000, async () => {
+  const ejecutable = buscarClaude();
+  return ejecutable ? versionDeClaude(ejecutable) : null;
+});
+
+// Las escrituras de resumenes.json van de a una: si no, dos resúmenes hechos a la vez se pisarían.
+let colaResumenes = Promise.resolve();
+const guardarResumen = (clave, dato) => (colaResumenes = colaResumenes.then(() => guardarResumenes(config.destinos, { [clave]: dato })));
+
+async function resumirConversacion(clave, señal) {
+  const { abs } = await resolver(clave);
+  const { resumen: r, eventos } = await analizarConCache(abs);
+  const info = (await indice()).conversaciones[clave];
+  const modelo = config.modeloResumenes;
+  const { texto } = await resumir({
+    eventos, titulo: info?.titulo ?? tituloDe(r).titulo, cwd: r.cwd, nombreUsuario: config.nombreUsuario,
+    ejecutable: buscarClaude(), modelo, carpeta: CARPETA_RESUMENES, señal,
+  });
+  const dato = { texto, modelo, generado: new Date().toISOString(), hasta: r.hasta, mensajes: r.mensajesUsuario };
+  await guardarResumen(clave, dato);
+  return dato;
+}
+
+async function cuentasDeResumenes() {
+  const { conversaciones } = await indice();
+  const hechos = await resumenes();
+  const lista = Object.values(conversaciones).filter((c) => !c.vacia && c.mensajesUsuario > 0);
+  return {
+    total: lista.length,
+    conResumen: lista.filter((c) => hechos[c.clave]).length,
+    faltan: lista.filter((c) => !hechos[c.clave]).length,
+    desactualizados: lista.filter((c) => desactualizado(hechos[c.clave], c)).length,
+    lista,
+    hechos,
+  };
+}
+
+async function iniciarResumenes(cuales) {
+  if (estado.resumenes?.enCurso) throw new ErrorHttp(409, 'Ya se están haciendo resúmenes.');
+  if (!buscarClaude()) throw new ErrorHttp(422, 'No encontré Claude Code en esta PC.');
+  const { lista, hechos } = await cuentasDeResumenes();
+  const pendientes = lista
+    .filter((c) => (cuales === 'desactualizados' ? desactualizado(hechos[c.clave], c) : !hechos[c.clave]))
+    .sort((a, b) => (b.hasta ?? '').localeCompare(a.hasta ?? ''));
+  if (!pendientes.length) throw new ErrorHttp(409, 'No hay conversaciones para resumir.');
+  const control = new AbortController();
+  const trabajo = { enCurso: true, cuales, hechos: 0, total: pendientes.length, errores: 0, ultimoError: null, motivo: null, actual: [], control };
+  estado.resumenes = trabajo;
+  let i = 0;
+  const trabajar = async () => {
+    while (i < pendientes.length && !control.signal.aborted) {
+      const c = pendientes[i++];
+      trabajo.actual.push(c.titulo);
+      try {
+        await resumirConversacion(c.clave, control.signal);
+      } catch (e) {
+        if (e.tipo !== 'cancelado') {
+          trabajo.errores++;
+          trabajo.ultimoError = e.message;
+          log('Resumen fallido', c.clave, e.message);
+          // Si falta Claude, la sesión o hay límite de uso, fallarían todas: se frena.
+          if (['sesion', 'falta', 'limite'].includes(e.tipo)) {
+            trabajo.motivo = e.message;
+            control.abort();
+          }
+        }
+      }
+      trabajo.actual = trabajo.actual.filter((t) => t !== c.titulo);
+      if (!control.signal.aborted) trabajo.hechos++;
+    }
+  };
+  Promise.all([trabajar(), trabajar()]).finally(() => {
+    trabajo.enCurso = false;
+    trabajo.actual = [];
+    trabajo.terminado = new Date().toISOString();
+    log('Resúmenes terminados', { hechos: trabajo.hechos, total: trabajo.total, errores: trabajo.errores, motivo: trabajo.motivo });
+  });
+}
+
+const resumenDeTrabajo = (t) => t && { enCurso: t.enCurso, cuales: t.cuales, hechos: t.hechos, total: t.total, errores: t.errores, ultimoError: t.ultimoError, motivo: t.motivo, actual: t.actual, terminado: t.terminado ?? null, cancelado: t.control.signal.aborted && !t.motivo };
+
+// ---------- Estadísticas ----------
+
+let cacheEstadisticas = { datos: null, resultado: null };
+async function estadisticas() {
+  const { conversaciones, auxiliares, version } = await indice();
+  if (version < 2) return { faltaIndice: Object.keys(conversaciones).length > 0, conversaciones: [] };
+  if (cacheEstadisticas.datos === cacheIndice.datos) return cacheEstadisticas.resultado;
+  const porSesion = new Map();
+  for (const a of Object.values(auxiliares)) {
+    if (!porSesion.has(a.sesion)) porSesion.set(a.sesion, []);
+    porSesion.get(a.sesion).push(...(a.uso ?? []));
+  }
+  const salida = [];
+  for (const c of Object.values(conversaciones)) {
+    const filas = new Map();
+    for (const u of [...(c.uso ?? []), ...(porSesion.get(carpetaDeSesion(c.clave)) ?? [])]) {
+      const k = `${u.dia}|${u.modelo}`;
+      const x = filas.get(k) ?? { dia: u.dia, modelo: u.modelo, entrada: 0, salida: 0, cacheEscritura: 0, cacheLectura: 0, respuestas: 0 };
+      for (const campo of ['entrada', 'salida', 'cacheEscritura', 'cacheLectura', 'respuestas']) x[campo] += u[campo] ?? 0;
+      filas.set(k, x);
+    }
+    if (filas.size) salida.push({ clave: c.clave, titulo: c.titulo, cwd: c.cwd, proyecto: c.proyecto, recuperada: c.recuperada, uso: [...filas.values()] });
+  }
+  cacheEstadisticas = { datos: cacheIndice.datos, resultado: { faltaIndice: false, conversaciones: salida } };
+  return cacheEstadisticas.resultado;
+}
+
 // ---------- Comprobar copias ----------
 
 const fuentesConApp = () => [...config.fuentes, fuenteDeLaApp(), fuenteDeLaConfiguracion(config)];
@@ -455,15 +582,19 @@ async function buscar(consulta) {
   const terminos = q.startsWith('"') && q.endsWith('"') && q.length > 2 ? [q.slice(1, -1)] : q.split(/\s+/).filter(Boolean);
   const { dest, conversaciones } = await indice();
   if (!dest) return [];
+  const hechos = await resumenes();
+  // El resumen se busca junto con el texto: va al principio, como en la exportación.
+  const textoCompleto = async (c, ruta) => `${hechos[c.clave] ? `${hechos[c.clave].texto}\n\n` : ''}${await fsp.readFile(ruta, 'utf8')}`;
   const resultados = [];
   for (const c of Object.values(conversaciones)) {
     if (c.vacia || !c.texto) continue;
     const ruta = rutaEnDestino(dest, c.texto);
     const st = await fsp.stat(ruta).catch(() => null);
     if (!st) continue;
+    const version = `${st.mtimeMs}|${hechos[c.clave]?.generado ?? ''}`;
     let t = cacheTextos.get(ruta);
-    if (!t || t.mtimeMs !== st.mtimeMs) {
-      t = { mtimeMs: st.mtimeMs, normal: normalizar(await fsp.readFile(ruta, 'utf8')) };
+    if (!t || t.version !== version) {
+      t = { version, normal: normalizar(await textoCompleto(c, ruta)) };
       cacheTextos.set(ruta, t);
     }
     if (!terminos.every((x) => t.normal.includes(x))) continue;
@@ -478,7 +609,7 @@ async function buscar(consulta) {
   resultados.sort((a, b) => b.total - a.total);
   const salida = [];
   for (const r of resultados.slice(0, 100)) {
-    const original = await fsp.readFile(r.ruta, 'utf8');
+    const original = await textoCompleto(r.c, r.ruta);
     salida.push({
       clave: r.c.clave,
       titulo: r.c.titulo,
@@ -575,6 +706,10 @@ async function cambiarAjustes(datos) {
     cambios.nombreUsuario = limpio;
   }
   if (datos.buscarActualizaciones !== undefined) cambios.buscarActualizaciones = Boolean(datos.buscarActualizaciones);
+  if (datos.modeloResumenes !== undefined) {
+    if (!MODELOS_RESUMEN.includes(datos.modeloResumenes)) throw new ErrorHttp(422, 'Modelo inválido.');
+    cambios.modeloResumenes = datos.modeloResumenes;
+  }
   if (datos.recordatorioDias !== undefined) {
     const n = Number(datos.recordatorioDias);
     if (!Number.isInteger(n) || n < 0 || n > 60) throw new ErrorHttp(422, 'Elegí entre 0 y 60 días.');
@@ -711,6 +846,8 @@ async function manejar(req, res) {
         pendientes: pend && { archivos: pend.archivos, bytes: pend.bytes, conversaciones: pend.conversaciones.size },
         riesgo: await riesgo(pend),
         recordatorioDias: config.recordatorioDias,
+        modeloResumenes: config.modeloResumenes,
+        resumenes: resumenDeTrabajo(estado.resumenes),
         comprobando: comprobando(),
         progresoComprobacion: estado.comprobacion,
         errorComprobacion: estado.errorComprobacion,
@@ -776,7 +913,8 @@ async function manejar(req, res) {
       const { abs } = await resolver(clave);
       const { resumen, eventos } = await analizarConCache(abs);
       const info = await infoConversacion(clave, abs);
-      const md = aMarkdown({ titulo: info.titulo, clave, resumen, eventos, nombreUsuario: config.nombreUsuario });
+      let md = aMarkdown({ titulo: info.titulo, clave, resumen, eventos, nombreUsuario: config.nombreUsuario });
+      if (info.resumenGuardado) md = md.replace('\n---\n', `\n## Resumen\n\n${info.resumenGuardado.texto}\n\n---\n`);
       const nombre = `${fechaLocal(resumen.desde, false) || 'conversacion'} - ${info.titulo}`.replace(/[\\/:*?"<>|\r\n]+/g, ' ').slice(0, 120).trim() + '.md';
       res.writeHead(200, {
         'Content-Type': 'text/markdown; charset=utf-8',
@@ -826,7 +964,44 @@ async function manejar(req, res) {
 
     case 'POST /api/ajustes':
       await cambiarAjustes(await cuerpo(req));
-      return json(res, 200, { nombreUsuario: config.nombreUsuario, buscarActualizaciones: config.buscarActualizaciones, recordatorioDias: config.recordatorioDias });
+      return json(res, 200, { nombreUsuario: config.nombreUsuario, buscarActualizaciones: config.buscarActualizaciones, recordatorioDias: config.recordatorioDias, modeloResumenes: config.modeloResumenes });
+
+    case 'GET /api/estadisticas':
+      return json(res, 200, await estadisticas());
+
+    case 'GET /api/resumenes': {
+      const ejecutable = buscarClaude();
+      const { lista, hechos, ...cuentas } = await cuentasDeResumenes();
+      return json(res, 200, { claude: ejecutable ? { ruta: ejecutable, version: await versionClaude() } : null, modelo: config.modeloResumenes, ...cuentas, trabajo: resumenDeTrabajo(estado.resumenes) });
+    }
+
+    case 'POST /api/resumenes/probar': {
+      try {
+        const r = await preguntarAClaude('Respondé solo con la palabra: listo', { ejecutable: buscarClaude(), modelo: config.modeloResumenes, carpeta: CARPETA_RESUMENES });
+        return json(res, 200, { ok: true, respuesta: r.texto });
+      } catch (e) {
+        return json(res, 200, { ok: false, error: e.message, tipo: e.tipo ?? null });
+      }
+    }
+
+    case 'POST /api/resumir': {
+      if (estado.resumenes?.enCurso) throw new ErrorHttp(409, 'Esperá a que terminen los resúmenes en curso.');
+      const { clave } = await cuerpo(req);
+      try {
+        return json(res, 200, await resumirConversacion(validarClave(clave)));
+      } catch (e) {
+        if (e instanceof ErrorHttp) throw e;
+        throw new ErrorHttp(e.tipo === 'falta' || e.tipo === 'sesion' ? 422 : 502, e.message);
+      }
+    }
+
+    case 'POST /api/resumir/todas':
+      await iniciarResumenes((await cuerpo(req)).cuales === 'desactualizados' ? 'desactualizados' : 'faltan');
+      return json(res, 202, { ok: true });
+
+    case 'POST /api/resumir/cancelar':
+      estado.resumenes?.control.abort();
+      return json(res, 200, { ok: true });
 
     case 'GET /api/archivos':
       return json(res, 200, await listaArchivos(q('q'), ['todos', 'faltan'].includes(q('modo')) ? q('modo') : 'cambiados'));

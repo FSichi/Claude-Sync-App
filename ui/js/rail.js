@@ -8,6 +8,7 @@ export const SECCIONES_AJUSTES = [
   { id: 'general', texto: 'General', icono: 'usuario' },
   { id: 'destinos', texto: 'Destinos', icono: 'disco' },
   { id: 'comprobar', texto: 'Comprobar copias', icono: 'escudo' },
+  { id: 'resumenes', texto: 'Resúmenes', icono: 'chispa' },
   { id: 'copia', texto: 'Qué se copia', icono: 'lista' },
   { id: 'app', texto: 'App', icono: 'caja' },
   { id: 'avanzado', texto: 'Avanzado', icono: 'terminal' },
@@ -108,6 +109,7 @@ export function pintarRail(ruta) {
     enlace('#/inicio', 'inicio', 'Inicio', { actual: ruta.seccion === 'inicio', compacta }),
     enlace('#/conversaciones', 'chat', 'Conversaciones', { actual: ruta.seccion === 'conversaciones', contador: visibles ? numero(visibles) : null, compacta }),
     enlace('#/archivos', 'archivo_codigo', 'Archivos', { actual: ruta.seccion === 'archivos', compacta }),
+    enlace('#/estadisticas', 'grafico', 'Estadísticas', { actual: ruta.seccion === 'estadisticas', compacta }),
     enlace('#/ajustes/general', 'ajustes', 'Ajustes', { punto: hayVersion, compacta }),
     h('div', { class: 'rail-pie' }, botonSincronizar(compacta, s)));
 }

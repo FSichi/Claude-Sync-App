@@ -5,6 +5,7 @@ import { est, sincronizarAhora, ultimaSincronizacion } from './estado.js';
 import { abrirModalVersion } from './actualizacion.js';
 import { abrirModal } from './capas.js';
 import { setFiltros, filtros } from './filtros.js';
+import { barras, eje, filasConBarra } from './graficos.js';
 
 const DIA = 86400000;
 const DIAS_ACTIVIDAD = 30;
@@ -120,51 +121,36 @@ function actividad(conversaciones) {
 }
 
 function graficoActividad(serie) {
-  const max = Math.max(1, ...serie.map((d) => d.respuestas));
   const total = serie.reduce((s, d) => s + d.respuestas, 0);
   const activos = serie.filter((d) => d.respuestas).length;
   const conversaciones = new Set(serie.flatMap((d) => [...d.conversaciones])).size;
-  const etiqueta = (d) => d.fecha.toLocaleDateString('es-AR', { weekday: 'short', day: 'numeric', month: 'short' });
-  const globo = h('div', { class: 'globo', hidden: true, role: 'status' });
-  const mostrar = (d, barra) => {
-    globo.replaceChildren(h('strong', null, etiqueta(d)), h('span', null, `${plural(d.respuestas, 'respuesta', 'respuestas')} de Claude`), h('span', null, plural(d.conversaciones.size, 'conversación', 'conversaciones')));
-    globo.hidden = false;
-    const r = barra.getBoundingClientRect();
-    const caja = barra.parentElement.getBoundingClientRect();
-    globo.style.left = `${Math.min(Math.max(0, r.left - caja.left + r.width / 2 - 80), caja.width - 160)}px`;
-  };
-  const barras = h('div', { class: 'barras' }, serie.map((d) => {
-    const barra = h('div', {
-      class: `barra-dia${d.respuestas ? '' : ' vacia'}`,
-      tabindex: '0',
-      'aria-label': `${etiqueta(d)}: ${plural(d.respuestas, 'respuesta', 'respuestas')}`,
-      onmouseenter: (ev) => mostrar(d, ev.currentTarget),
-      onfocus: (ev) => mostrar(d, ev.currentTarget),
-      onmouseleave: () => (globo.hidden = true),
-      onblur: () => (globo.hidden = true),
-    }, h('div', { class: 'barra-dia-valor', style: `height: ${d.respuestas ? Math.max(4, (d.respuestas / max) * 100) : 0}%` }));
-    return barra;
-  }));
   const corta = (d) => d.toLocaleDateString('es-AR', { day: 'numeric', month: 'short' });
+  const puntos = serie.map((d) => ({
+    valor: d.respuestas,
+    titulo: d.fecha.toLocaleDateString('es-AR', { weekday: 'short', day: 'numeric', month: 'short' }),
+    lineas: [`${plural(d.respuestas, 'respuesta', 'respuestas')} de Claude`, plural(d.conversaciones.size, 'conversación', 'conversaciones')],
+  }));
   return h('div', { class: 'tarjeta actividad' },
     h('div', { class: 'actividad-cifras' },
       h('div', null, h('div', { class: 'stat-num' }, numero(total)), h('div', { class: 'stat-etq' }, 'respuestas de Claude')),
       h('div', null, h('div', { class: 'stat-num' }, numero(activos)), h('div', { class: 'stat-etq' }, 'días con actividad')),
       h('div', null, h('div', { class: 'stat-num' }, numero(conversaciones)), h('div', { class: 'stat-etq' }, 'conversaciones'))),
-    h('div', { class: 'grafico', role: 'group', 'aria-label': `Respuestas de Claude por día en los últimos ${DIAS_ACTIVIDAD} días` }, globo, barras),
-    h('div', { class: 'eje' }, h('span', null, corta(serie[0].fecha)), h('span', null, corta(serie[Math.floor(serie.length / 2)].fecha)), h('span', null, 'hoy')));
+    barras(puntos, { descripcion: `Respuestas de Claude por día en los últimos ${DIAS_ACTIVIDAD} días` }),
+    eje(corta(serie[0].fecha), corta(serie[Math.floor(serie.length / 2)].fecha), 'hoy'),
+    h('a', { class: 'ver-mas', href: '#/estadisticas' }, 'Ver estadísticas completas'));
 }
 
 function proyectosActivos(proyectos) {
   if (!proyectos.length) return h('p', { class: 'tenue' }, `Sin actividad en los últimos ${DIAS_ACTIVIDAD} días.`);
   const porRespuestas = proyectos.some((p) => p.respuestas);
-  const valor = (p) => (porRespuestas ? p.respuestas : p.conversaciones.size);
-  const max = Math.max(1, ...proyectos.map(valor));
-  return h('div', { class: 'tarjeta proyectos' }, proyectos.map((p) =>
-    h('a', { class: 'proyecto', href: '#/conversaciones', onclick: (ev) => { ev.preventDefault(); irConFiltro({ carpetas: [p.carpeta], fecha: '30' }); } },
-      h('div', { class: 'proyecto-cab' }, h('span', { class: 'proyecto-nombre', title: p.carpeta }, p.carpeta), h('span', { class: 'tenue' }, porRespuestas ? plural(p.conversaciones.size, 'conversación', 'conversaciones') : '')),
-      h('div', { class: 'proyecto-barra' }, h('div', { style: `width: ${Math.max(2, (valor(p) / max) * 100)}%` })),
-      h('div', { class: 'proyecto-valor' }, porRespuestas ? plural(p.respuestas, 'respuesta de Claude', 'respuestas de Claude') : plural(p.conversaciones.size, 'conversación', 'conversaciones')))));
+  return filasConBarra(proyectos.map((p) => ({
+    nombre: p.carpeta,
+    valor: porRespuestas ? p.respuestas : p.conversaciones.size,
+    derecha: porRespuestas ? plural(p.conversaciones.size, 'conversación', 'conversaciones') : null,
+    abajo: porRespuestas ? plural(p.respuestas, 'respuesta de Claude', 'respuestas de Claude') : plural(p.conversaciones.size, 'conversación', 'conversaciones'),
+    href: '#/conversaciones',
+    alClic: () => irConFiltro({ carpetas: [p.carpeta], fecha: '30' }),
+  })));
 }
 
 export function pintarInicio(vista) {

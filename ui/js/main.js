@@ -5,13 +5,14 @@ import { pintarRail } from './rail.js';
 import { pintarInicio } from './inicio.js';
 import { pintarConversaciones, refrescarLista, enfocarBusqueda } from './conversaciones.js';
 import { pintarArchivos, refrescarArchivos } from './archivos.js';
+import { pintarEstadisticas, refrescarEstadisticas } from './estadisticas.js';
 import { pintarAjustes, repintarAjustes, seccionDeAjustes, alLlegarEstado } from './ajustes.js';
 import { comprobarActualizacion, avisarSiHayVersion, mostrarNovedadesSiCorresponde } from './actualizacion.js';
 import { cerrarSuperior, hayCapas } from './capas.js';
 
 function rutaActual() {
   const partes = location.hash.replace(/^#\/?/, '').split('/');
-  const seccion = ['inicio', 'conversaciones', 'archivos', 'ajustes'].includes(partes[0]) ? partes[0] : 'inicio';
+  const seccion = ['inicio', 'conversaciones', 'archivos', 'estadisticas', 'ajustes'].includes(partes[0]) ? partes[0] : 'inicio';
   let param = partes.slice(1).join('/') || null;
   if (param) {
     try {
@@ -41,6 +42,7 @@ function render() {
   pintarRail(r);
   if (r.seccion === 'conversaciones') pintarConversaciones(vista, r.param);
   else if (r.seccion === 'archivos') pintarArchivos(vista, r.param);
+  else if (r.seccion === 'estadisticas') pintarEstadisticas(vista);
   else if (r.seccion === 'ajustes') pintarAjustes(vista, r.param);
   else repintarInicio();
   if (seccionPintada !== r.seccion || r.seccion === 'ajustes') vista.scrollTop = 0;
@@ -69,6 +71,7 @@ on('actualizacion', () => {
 on('sincronizacion-terminada', () => {
   if (rutaActual().seccion === 'ajustes') repintarAjustes();
   if (rutaActual().seccion === 'archivos') refrescarArchivos();
+  refrescarEstadisticas();
 });
 
 document.addEventListener('keydown', (e) => {

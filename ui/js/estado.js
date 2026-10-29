@@ -40,7 +40,9 @@ export async function actualizarEstado() {
     est.sincronizandoAntes = e.sincronizando;
     est.comprobandoAntes = e.comprobando;
     emit('estado', e);
-    const pronto = e.sincronizando || e.comprobando || e.actualizacion ? 700 : !e.pendientes ? 2500 : 30000;
+    if (est.resumiendoAntes && !e.resumenes?.enCurso) alTerminarResumenes(e.resumenes);
+    est.resumiendoAntes = Boolean(e.resumenes?.enCurso);
+    const pronto = e.sincronizando || e.comprobando || e.actualizacion ? 700 : e.resumenes?.enCurso ? 1500 : !e.pendientes ? 2500 : 30000;
     temporizador = setTimeout(actualizarEstado, pronto);
   } catch {
     est.conexionPerdida = true;
@@ -123,6 +125,13 @@ function alTerminarComprobacion(e) {
     else toast(`${titulo}: ${plural(problemas, 'archivo sigue', 'archivos siguen')} con problemas. Mirá Ajustes → Comprobar copias.`, 'error');
   }
   emit('comprobacion-terminada', e);
+}
+
+function alTerminarResumenes(t) {
+  if (!t) return;
+  if (t.motivo) toast(`Los resúmenes se frenaron: ${t.motivo}`, 'error');
+  else toast(`${t.cancelado ? 'Resúmenes cancelados' : 'Resúmenes terminados'}: ${plural(t.hechos - t.errores, 'hecho', 'hechos')}${t.errores ? `, ${plural(t.errores, 'con error', 'con error')}` : ''}.`, t.errores ? 'error' : 'ok');
+  cargarConversaciones();
 }
 
 export const ultimaSincronizacion = (e) => {

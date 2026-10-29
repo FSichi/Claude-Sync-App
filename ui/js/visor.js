@@ -8,7 +8,7 @@ import { etiquetasConversacion } from './inicio.js';
 import { itemArchivo } from './archivos.js';
 
 const PAGINA = 300;
-const prefs = { herramientas: leerPref('herramientas', true), pensamiento: leerPref('pensamiento', false) };
+const prefs = { herramientas: leerPref('herramientas', true), pensamiento: leerPref('pensamiento', false), resumen: leerPref('resumen', true) };
 let v = null; // conversación abierta
 let observador = null;
 let cargando = false;
@@ -384,10 +384,62 @@ function datos(i) {
     i.lineasDanadas ? dato('alerta', plural(i.lineasDanadas, 'línea dañada', 'líneas dañadas')) : null);
 }
 
+// ---------- Resumen ----------
+
+const puedeResumir = (i) => !i.vacia && (i.mensajesUsuario ?? 0) > 0;
+const nombreDelModelo = (m = '') => m.charAt(0).toUpperCase() + m.slice(1);
+
+function tarjetaResumen() {
+  const i = v.info;
+  const r = i.resumenGuardado;
+  if (r) {
+    const pie = h('div', { class: 'resumen-pie' },
+      h('span', { class: 'tenue' }, `Hecho con ${nombreDelModelo(r.modelo)} el ${fechaLarga(r.generado)}.`),
+      h('button', { type: 'button', class: 'btn btn-chico', onclick: (e) => hacerResumen(e.currentTarget) }, icono('chispa', 14), r.desactualizado ? 'Actualizar el resumen' : 'Volver a resumir'));
+    return h('details', { class: 'resumen', id: 'resumen', open: prefs.resumen, ontoggle: (e) => guardarPref('resumen', (prefs.resumen = e.currentTarget.open)) },
+      h('summary', null, icono('chevron', 13), icono('chispa', 15), h('span', { class: 'resumen-titulo' }, 'Resumen'), r.desactualizado ? h('span', { class: 'etq etq-alerta' }, 'Hay mensajes nuevos') : null),
+      h('div', { class: 'md', html: markdown(r.texto) }),
+      pie);
+  }
+  if (!puedeResumir(i)) return null;
+  return h('div', { class: 'resumen resumen-vacio', id: 'resumen' },
+    icono('chispa', 15),
+    h('span', null, 'Claude puede resumir esta conversación: qué se buscaba, qué se hizo y qué quedó pendiente.'),
+    h('button', { type: 'button', class: 'btn btn-chico', onclick: (e) => hacerResumen(e.currentTarget) }, 'Resumir con Claude'));
+}
+
+async function hacerResumen(boton) {
+  const actual = v;
+  const tarjeta = $('#resumen');
+  if (boton) {
+    boton.disabled = true;
+    boton.classList.add('girando');
+    boton.lastChild.textContent = 'Resumiendo… puede tardar un minuto';
+  }
+  try {
+    const r = await post('/api/resumir', { clave: actual.clave });
+    if (v !== actual) return;
+    actual.info.resumenGuardado = { ...r, desactualizado: false };
+    prefs.resumen = true;
+    tarjeta?.replaceWith(tarjetaResumen());
+    toast('Resumen listo', 'ok');
+  } catch (e) {
+    if (v !== actual) return;
+    tarjeta?.replaceWith(tarjetaResumen());
+    abrirModal({
+      titulo: 'No se pudo hacer el resumen',
+      ancho: 520,
+      contenido: h('p', { class: 'sutil' }, e.message),
+      pie: h('a', { class: 'btn', href: '#/ajustes/resumenes' }, 'Ver Ajustes › Resúmenes'),
+    });
+  }
+}
+
 function abrirAcciones(boton) {
   const i = v.info;
   const puedeRestaurar = !i.enClaude && v.enArchivo && i.id;
   abrirMenu(boton, [
+    puedeResumir(i) ? { texto: i.resumenGuardado ? (i.resumenGuardado.desactualizado ? 'Actualizar el resumen' : 'Volver a resumir') : 'Resumir con Claude', icono: 'chispa', detalle: 'Lo hace tu Claude Code', accion: () => hacerResumen($('#resumen button:not([disabled])')) } : null,
     { texto: 'Exportar como Markdown', icono: 'exportar', href: `/api/exportar?clave=${enc(v.clave)}&t=${TOKEN}`, descargar: true },
     { texto: 'Mostrar en la carpeta', icono: 'carpeta', accion: () => post('/api/abrir', { clave: v.clave }).catch(avisarError) },
     puedeRestaurar ? { texto: 'Restaurar en Claude', icono: 'restaurar', detalle: 'La copia a Claude Code sin pisar nada', accion: restaurar } : null,
@@ -440,6 +492,7 @@ function pintarCabecera() {
 function pintar(lector, eventos) {
   const cab = cabecera();
   const transcripcion = h('article', { class: 'transcripcion', id: 'transcripcion' },
+    tarjetaResumen(),
     h('div', { class: 'cargar-mas', id: 'cargar-anteriores', hidden: true }, h('button', { type: 'button', class: 'btn btn-chico', onclick: cargarAnteriores }, 'Cargar mensajes anteriores')),
     h('div', { id: 'eventos', style: 'display: flex; flex-direction: column; gap: 14px' }),
     h('div', { class: 'cargar-mas', id: 'centinela' }));
