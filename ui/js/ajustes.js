@@ -1,7 +1,7 @@
-// Ajustes: General, Destinos, Qué se copia, App y Avanzado.
-import { h, api, post, avisarError, toast, hace, tamano, fechaDia, aplicarTema, leerPref, plural, enc } from './util.js';
+// Ajustes: General, Destinos, Comprobar copias, Qué se copia, App y Avanzado.
+import { h, api, post, avisarError, toast, hace, tamano, numero, fechaDia, aplicarTema, leerPref, plural, enc } from './util.js';
 import { icono } from './iconos.js';
-import { est, actualizarEstado } from './estado.js';
+import { est, actualizarEstado, comprobarCopias, repararCopias } from './estado.js';
 import { abrirModal, confirmar } from './capas.js';
 import { iconoDestino, estadoDestino } from './inicio.js';
 import { comprobarActualizacion, abrirModalVersion, nodoNotas } from './actualizacion.js';
@@ -38,11 +38,114 @@ function general() {
         aplicarTema(id);
         for (const b of ev.currentTarget.parentElement.children) b.setAttribute('aria-pressed', String(b === ev.currentTarget));
       } }, icono(ic, 14), texto)));
+  const dias = [[0, 'No avisar'], [1, '1 día'], [2, '2 días'], [3, '3 días'], [5, '5 días'], [7, '1 semana'], [14, '2 semanas']];
+  if (!dias.some(([n]) => n === e.recordatorioDias)) dias.push([e.recordatorioDias, `${e.recordatorioDias} días`]);
+  const recordatorio = h('select', {
+    class: 'selector',
+    'aria-label': 'Avisar si pasan días sin sincronizar',
+    value: String(e.recordatorioDias),
+    onchange: async (ev) => {
+      try {
+        await post('/api/ajustes', { recordatorioDias: Number(ev.target.value) });
+        await actualizarEstado();
+        toast('Recordatorio guardado', 'ok');
+      } catch (err) {
+        avisarError(err);
+      }
+    },
+  }, dias.map(([n, texto]) => h('option', { value: String(n) }, texto)));
   return [
     cabecera('General'),
     h('div', { class: 'lista-ajustes' },
       ajuste('Tu nombre', 'Cómo aparecen tus mensajes en las conversaciones y en los textos exportados.', nombre, h('button', { type: 'button', class: 'btn', onclick: guardar }, 'Guardar')),
-      ajuste('Tema', 'Sistema usa el mismo que Windows.', seg)),
+      ajuste('Tema', 'Sistema usa el mismo que Windows.', seg),
+      ajuste('Recordatorio para sincronizar', 'Si pasan estos días sin sincronizar y hay conversaciones con cambios, el inicio te avisa. La app nunca sincroniza sola.', recordatorio)),
+  ];
+}
+
+// ---------- Comprobar copias ----------
+
+const TIPOS_PROBLEMA = {
+  falta: 'Falta en el destino',
+  tamano: 'Tiene otro tamaño que el que se copió',
+  contenido: 'El contenido está dañado',
+  ilegible: 'No se pudo leer',
+};
+
+async function verProblemas(i, d) {
+  try {
+    const c = await api(`/api/comprobacion?destino=${i}`);
+    const grupos = Object.entries(TIPOS_PROBLEMA).map(([tipo, texto]) => [texto, c.problemas.filter((p) => p.tipo === tipo)]).filter(([, l]) => l.length);
+    const capa = abrirModal({
+      titulo: `Problemas en ${d.etiqueta}`,
+      ancho: 820,
+      contenido: [
+        h('p', { class: 'sutil' }, `Comprobación ${c.fondo ? 'a fondo' : 'rápida'} ${hace(c.fecha)}.${c.totalProblemas > c.problemas.length ? ` Se muestran ${numero(c.problemas.length)} de ${numero(c.totalProblemas)}.` : ''}`),
+        ...grupos.map(([texto, lista]) => h('section', { class: 'seccion' },
+          h('h3', { class: 'seccion-titulo' }, `${texto} (${numero(lista.length)})`),
+          h('div', { class: 'filas' }, lista.map((p) => h('div', { class: 'fila' },
+            h('code', { class: 'fila-titulo mono', title: p.rel }, p.rel),
+            p.borradaEnClaude ? h('span', { class: 'etq etq-peligro', title: 'Claude ya no lo tiene: la copia buena tiene que salir de otro destino' }, 'Borrado en Claude') : null,
+            p.alSincronizar ? h('span', { class: 'etq etq-acento', title: 'Claude tiene una versión más nueva: la próxima sincronización lo pone al día' }, 'Se arregla al sincronizar') : null,
+            p.error ? h('span', { class: 'etq etq-alerta', title: p.error }, 'Error') : null))))),
+      ],
+      pie: [
+        h('p', { class: 'nota' }, 'Reparar copia la versión buena desde Claude o desde otro destino. Antes guarda la dañada en _versiones/: no se borra nada.'),
+        h('button', { type: 'button', class: 'btn btn-primario', disabled: est.app.sincronizando || est.app.comprobando, onclick: () => { capa.cerrar(); repararCopias(i); } }, 'Reparar'),
+      ],
+    });
+  } catch (e) {
+    avisarError(e);
+  }
+}
+
+async function aFondo(d, i) {
+  const si = await confirmar({
+    titulo: `Comprobar ${d.etiqueta} a fondo`,
+    texto: `Lee todo lo que hay en el destino${d.comprobacion?.bytes ? ` (unos ${tamano(d.comprobacion.bytes)})` : ''} y lo compara con Claude y con la comprobación anterior. Puede tardar varios minutos.${d.streaming ? ' En Google Drive en modo transmisión, también baja de internet lo que no esté disponible sin conexión.' : ''}`,
+    aceptar: 'Comprobar a fondo',
+  });
+  if (si) comprobarCopias([i], true);
+}
+
+function filaComprobacion(d, i, ocupado) {
+  const c = d.comprobacion;
+  const [clase, texto] = !d.disponible ? ['peligro', 'No disponible'] : !c ? ['', 'Nunca se comprobó'] : c.problemas ? ['peligro', plural(c.problemas, 'archivo con problemas', 'archivos con problemas')] : ['ok', 'Sin problemas'];
+  const desc = c
+    ? `${c.reparado ? `Reparado ${hace(c.reparado)}` : `Comprobación ${c.fondo ? 'a fondo' : 'rápida'} ${hace(c.fecha)}`} · ${plural(c.archivos, 'archivo', 'archivos')}, ${tamano(c.bytes)}`
+    : 'Todavía no se comprobó este destino.';
+  return h('div', { class: 'destino' },
+    icono(iconoDestino(d), 20),
+    h('div', { class: 'destino-info' },
+      h('div', { class: 'nombre' }, d.etiqueta, h('span', { class: `estado-texto ${clase}` }, texto)),
+      h('div', { class: 'ruta' }, d.ruta),
+      h('div', { class: 'desc' }, desc)),
+    h('div', { class: 'acciones' },
+      c?.problemas ? h('button', { type: 'button', class: 'btn btn-chico', onclick: () => verProblemas(i, d) }, 'Ver detalle') : null,
+      c?.problemas ? h('button', { type: 'button', class: 'btn btn-chico btn-primario', disabled: ocupado, onclick: () => repararCopias(i) }, 'Reparar') : null,
+      h('button', { type: 'button', class: 'btn btn-chico', disabled: ocupado || !d.disponible, onclick: () => comprobarCopias([i], false) }, 'Rápida'),
+      h('button', { type: 'button', class: 'btn btn-chico', disabled: ocupado || !d.disponible, onclick: () => aFondo(d, i) }, 'A fondo')));
+}
+
+function comprobacion() {
+  const e = est.app;
+  const ocupado = e.sincronizando || e.comprobando;
+  const p = e.progresoComprobacion;
+  const fraccion = p ? (p.bytesTotal ? p.bytesHechos / p.bytesTotal : p.total ? p.hechos / p.total : null) : null;
+  return [
+    cabecera('Comprobar copias', 'Revisa que en cada destino esté todo lo que se copió y que nada se haya dañado. Lo que esté mal se repara con la versión buena de Claude o de otro destino, sin borrar nada.'),
+    e.comprobando && p ? h('div', { class: 'tarjeta progreso-tarjeta', role: 'status' },
+      h('div', { class: 'sync-estado' }, h('span', { class: 'estado-punto acento' }), h('span', null, `${p.fase === 'reparando' ? 'Reparando' : p.fondo ? 'Comprobando a fondo' : 'Comprobando'} ${p.destino}`), fraccion != null ? h('span', { class: 'tenue' }, `${Math.round(fraccion * 100)} %`) : null),
+      h('div', { class: `barra${fraccion == null ? ' indeterminada' : ''}` }, h('div', { class: 'barra-relleno', style: fraccion != null ? `width: ${Math.round(fraccion * 100)}%` : null })),
+      h('div', { class: 'sync-detalle' }, p.bytesTotal ? `${tamano(p.bytesHechos)} de ${tamano(p.bytesTotal)}` : p.total ? `${numero(p.hechos)} de ${numero(p.total)} archivos` : '')) : null,
+    e.errorComprobacion ? h('div', { class: 'aviso error', role: 'alert' }, icono('alerta', 18), h('div', { class: 'aviso-texto' }, `La última comprobación falló: ${e.errorComprobacion}`)) : null,
+    e.destinos.length
+      ? h('div', { class: 'lista-ajustes' }, e.destinos.map((d, i) => filaComprobacion(d, i, ocupado)))
+      : h('div', { class: 'vacio-tarjeta' }, icono('escudo', 22), h('p', null, 'Primero elegí dónde guardar las copias, en Destinos.')),
+    e.destinos.length > 1 ? h('div', null, h('button', { type: 'button', class: 'btn', disabled: ocupado, onclick: () => comprobarCopias([], false) }, icono('escudo', 15), 'Comprobar todos (rápida)')) : null,
+    h('div', { class: 'grid-2' },
+      h('div', { class: 'tarjeta explicacion' }, h('h3', null, 'Rápida'), h('p', null, 'Mira que cada archivo esté y tenga el tamaño esperado. Tarda segundos y no lee el contenido, así que en Google Drive no baja nada.')),
+      h('div', { class: 'tarjeta explicacion' }, h('h3', null, 'A fondo'), h('p', null, 'Lee cada archivo y compara su huella (SHA-256) con Claude, si no cambió, o con la comprobación anterior. Encuentra archivos dañados aunque tengan el tamaño correcto.'))),
   ];
 }
 
@@ -248,13 +351,11 @@ function avanzado() {
       ajuste('Configuración', e.configuracion, h('button', { type: 'button', class: 'btn', onclick: () => abrir({ que: 'configuracion' }) }, 'Mostrar')),
       ajuste('Registro de la app', e.log, h('button', { type: 'button', class: 'btn', onclick: () => abrir({ que: 'log' }) }, 'Mostrar')),
       ajuste('Carpeta de datos de la app', `${e.carpetaDatos}. Guarda la configuración, el registro y una copia de cada configuración anterior.`, h('button', { type: 'button', class: 'btn', onclick: () => abrir({ que: 'datos' }) }, 'Abrir')),
-      ajuste('Borrado automático de Claude Code', limpieza.configurado
-        ? `Claude Code está configurado para borrar las sesiones de terminal con más de ${limpieza.dias} días (cleanupPeriodDays).`
-        : 'Claude Code borra las sesiones de terminal con más de 30 días sin uso (cleanupPeriodDays). Las de la app de escritorio no tienen ese límite. Las copias de esta app no se ven afectadas.')),
+      ajuste('Borrado automático de Claude Code', `Claude Code borra las sesiones que pasan ${limpieza.dias} días sin cambios (cleanupPeriodDays${limpieza.configurado ? ', configurado en tu settings.json' : ', el valor por defecto'}). Lo que ya está en tus copias no se pierde, y el inicio te avisa si alguna conversación sin respaldar está por borrarse.`)),
   ];
 }
 
-const SECCIONES = { general, destinos, copia, app, avanzado };
+const SECCIONES = { general, destinos, comprobar: comprobacion, copia, app, avanzado };
 
 function repintar() {
   if (!contenedor || !document.contains(contenedor) || !est.app) return;
@@ -273,12 +374,16 @@ export function pintarAjustes(vista, seccion) {
   repintar();
 }
 
-// Si la página se abrió antes de tener el estado, se pinta cuando llega.
+// Si la página se abrió antes de tener el estado, se pinta cuando llega. Comprobar copias muestra el progreso.
+let comprobandoAntes = false;
 export function alLlegarEstado() {
   if (contenedor?.dataset.cargando && est.app) {
     delete contenedor.dataset.cargando;
     repintar();
+  } else if (seccionActual === 'comprobar' && (est.app?.comprobando || comprobandoAntes)) {
+    repintar();
   }
+  comprobandoAntes = Boolean(est.app?.comprobando);
 }
 
 export const repintarAjustes = repintar;

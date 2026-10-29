@@ -1,10 +1,11 @@
 // Lector de una conversación: encabezado con acciones y la transcripción paginada.
-import { h, $, $$, api, post, enc, TOKEN, numero, tamano, fechaLarga, nombreCarpeta, navegar, rutaConversacion, leerPref, guardarPref, copiar, toast, avisarError, plural } from './util.js';
+import { h, $, $$, api, post, enc, TOKEN, numero, tamano, fechaLarga, nombreCarpeta, nombreModelo, navegar, rutaConversacion, leerPref, guardarPref, copiar, toast, avisarError, plural } from './util.js';
 import { icono } from './iconos.js';
 import { markdown } from './markdown.js';
-import { abrirModal, abrirCajon } from './capas.js';
+import { abrirModal, abrirCajon, abrirMenu } from './capas.js';
 import { est } from './estado.js';
 import { etiquetasConversacion } from './inicio.js';
+import { itemArchivo } from './archivos.js';
 
 const PAGINA = 300;
 const prefs = { herramientas: leerPref('herramientas', true), pensamiento: leerPref('pensamiento', false) };
@@ -197,22 +198,32 @@ function mostrarComando(comando, intro) {
   });
 }
 
-async function restaurar(boton) {
+async function restaurar() {
   try {
     const r = await post('/api/restaurar', { clave: v.clave });
     const intro = r.yaExistia
       ? `Esta conversación ya estaba en Claude (${r.ruta}). No se tocó nada.`
       : `Listo: se copió a ${r.ruta}${r.auxCopiados ? ` junto con ${plural(r.auxCopiados, 'archivo', 'archivos')} de subagentes y herramientas` : ''}. Para retomarla, abrí una terminal y corré:`;
     v.info.enClaude = true;
-    if (r.comando) {
-      mostrarComando(r.comando, intro);
-      boton.replaceWith(h('button', { type: 'button', class: 'btn btn-chico', onclick: () => mostrarComando(r.comando) }, icono('terminal', 14), 'Cómo retomarla'));
-    } else {
-      toast(intro, 'ok');
-      boton.remove();
-    }
+    if (r.comando) v.info.comandoRetomar = r.comando;
+    pintarCabecera();
+    if (r.comando) mostrarComando(r.comando, intro);
+    else toast(intro, 'ok');
   } catch (e) {
     avisarError(e);
+  }
+}
+
+async function verArchivos() {
+  const cuerpo = h('div', { class: 'opciones' }, h('p', { class: 'tenue' }, 'Cargando…'));
+  const capa = abrirCajon({ titulo: 'Archivos que tocó', contenido: cuerpo });
+  try {
+    const lista = await api(`/api/archivos-de?clave=${enc(v.clave)}`);
+    cuerpo.replaceChildren(...(lista.length
+      ? lista.map((a) => itemArchivo(a, { alElegir: () => capa.cerrar() }))
+      : [h('p', { class: 'tenue' }, 'No hay archivos registrados en esta conversación.')]));
+  } catch (e) {
+    cuerpo.replaceChildren(h('p', { class: 'mensaje error' }, e.message));
   }
 }
 
@@ -350,50 +361,84 @@ async function siguienteCoincidencia() {
 
 // ---------- Pintar ----------
 
-function meta(i) {
-  const partes = [];
-  partes.push(h('span', null, `${fechaLarga(i.desde)} → ${fechaLarga(i.hasta)}`));
-  partes.push(h('span', null, `${plural(i.mensajesUsuario ?? 0, 'mensaje tuyo', 'mensajes tuyos')} · ${plural(i.respuestas ?? 0, 'respuesta', 'respuestas')} · ${plural(i.herramientas ?? 0, 'herramienta', 'herramientas')}`));
-  if (i.tamano) partes.push(h('span', null, tamano(i.tamano)));
-  if (i.modelos?.length) partes.push(h('span', null, i.modelos.join(', ')));
-  if (i.rama && i.rama !== 'HEAD') partes.push(h('span', null, `rama ${i.rama}`));
-  if (i.lineasDanadas) partes.push(h('span', null, plural(i.lineasDanadas, 'línea dañada', 'líneas dañadas')));
-  return h('div', { class: 'lector-meta' }, partes);
+function rangoFechas(desde, hasta) {
+  if (!desde) return 'Sin fecha';
+  const d = new Date(desde);
+  const a = new Date(hasta || desde);
+  const dia = (x) => x.toLocaleDateString('es-AR', { day: 'numeric', month: 'short', year: 'numeric' });
+  return dia(d) === dia(a) ? `${dia(d)}, ${hora(desde)} a ${hora(hasta || desde)}` : `${dia(d)} → ${dia(a)}`;
 }
 
-function pintar(lector, eventos) {
-  const i = v.info;
-  const carpeta = nombreCarpeta(i);
-  const accionRetomar = !i.enClaude && v.enArchivo && i.id
-    ? h('button', { type: 'button', class: 'btn btn-chico', title: 'Copia la conversación a Claude Code para retomarla. No pisa nada.', onclick: (e) => restaurar(e.currentTarget) }, icono('restaurar', 14), 'Restaurar en Claude')
-    : i.enClaude && i.comandoRetomar
-      ? h('button', { type: 'button', class: 'btn btn-chico', onclick: () => mostrarComando(i.comandoRetomar) }, icono('terminal', 14), 'Cómo retomarla')
-      : null;
+function datos(i) {
+  const dato = (nombreIcono, texto, titulo = null) => h('span', { class: 'dato', title: titulo }, icono(nombreIcono, 13), texto);
+  const boton = (nombreIcono, texto, alClic) => h('button', { type: 'button', class: 'dato dato-boton', onclick: alClic }, icono(nombreIcono, 13), texto);
+  return h('div', { class: 'lector-datos' },
+    dato('calendario', rangoFechas(i.desde, i.hasta), `${fechaLarga(i.desde)} → ${fechaLarga(i.hasta)}`),
+    dato('chat', `${numero(i.mensajesUsuario ?? 0)} tuyos · ${numero(i.respuestas ?? 0)} de Claude`),
+    i.herramientas ? dato('herramienta', plural(i.herramientas, 'herramienta', 'herramientas')) : null,
+    i.subagentes ? boton('ramas', plural(i.subagentes, 'subagente', 'subagentes'), verSubagentes) : null,
+    i.archivosTocados ? boton('archivo_codigo', plural(i.archivosTocados, 'archivo', 'archivos'), verArchivos) : null,
+    i.modelos?.length ? dato('chispa', i.modelos.map(nombreModelo).join(', '), i.modelos.join(', ')) : null,
+    i.tamano ? dato('caja', tamano(i.tamano)) : null,
+    i.rama && i.rama !== 'HEAD' ? dato('ramas', i.rama, 'Rama de git') : null,
+    i.lineasDanadas ? dato('alerta', plural(i.lineasDanadas, 'línea dañada', 'líneas dañadas')) : null);
+}
 
-  const cab = h('header', { class: 'lector-cab' },
+function abrirAcciones(boton) {
+  const i = v.info;
+  const puedeRestaurar = !i.enClaude && v.enArchivo && i.id;
+  abrirMenu(boton, [
+    { texto: 'Exportar como Markdown', icono: 'exportar', href: `/api/exportar?clave=${enc(v.clave)}&t=${TOKEN}`, descargar: true },
+    { texto: 'Mostrar en la carpeta', icono: 'carpeta', accion: () => post('/api/abrir', { clave: v.clave }).catch(avisarError) },
+    puedeRestaurar ? { texto: 'Restaurar en Claude', icono: 'restaurar', detalle: 'La copia a Claude Code sin pisar nada', accion: restaurar } : null,
+    i.enClaude && i.comandoRetomar ? { texto: 'Cómo retomarla', icono: 'terminal', accion: () => mostrarComando(i.comandoRetomar) } : null,
+    i.subagentes || i.archivosTocados ? '-' : null,
+    i.subagentes ? { texto: 'Ver subagentes', icono: 'ramas', detalle: plural(i.subagentes, 'subagente', 'subagentes'), accion: verSubagentes } : null,
+    i.archivosTocados ? { texto: 'Archivos que tocó', icono: 'archivo_codigo', detalle: `${plural(i.archivosTocados, 'archivo', 'archivos')}, ${numero(i.archivosCambiados ?? 0)} con cambios`, accion: verArchivos } : null,
+    '-',
+    i.id ? { texto: 'Copiar el ID de la sesión', icono: 'copiar', accion: () => copiar(i.id, 'ID copiado') } : null,
+    i.cwd ? { texto: 'Copiar la carpeta del proyecto', icono: 'copiar', accion: () => copiar(i.cwd, 'Carpeta copiada') } : null,
+    i.comandoRetomar ? { texto: 'Copiar el comando para retomarla', icono: 'copiar', accion: () => copiar(i.comandoRetomar, 'Comando copiado') } : null,
+  ], { etiqueta: 'Acciones de la conversación' });
+}
+
+function cabecera() {
+  const i = v.info;
+  const principal = !i.enClaude && v.enArchivo && i.id
+    ? h('button', { type: 'button', class: 'btn btn-chico', title: 'Copia la conversación a Claude Code para retomarla. No pisa nada.', onclick: restaurar }, icono('restaurar', 14), 'Restaurar en Claude')
+    : i.enClaude && i.comandoRetomar
+      ? h('button', { type: 'button', class: 'btn btn-chico', onclick: () => mostrarComando(i.comandoRetomar) }, icono('terminal', 14), 'Retomar')
+      : null;
+  const vista = (cual, nombreIcono, texto) => h('button', { type: 'button', 'aria-pressed': String(prefs[cual]), title: `Mostrar u ocultar ${texto.toLowerCase()}`, onclick: (e) => alternar(cual, e.currentTarget) }, icono(nombreIcono, 14), texto);
+
+  return h('header', { class: 'lector-cab' },
     h('div', { class: 'migas' },
       v.padre
         ? h('a', { href: rutaConversacion(v.padre) }, icono('izquierda', 15), 'Volver a la conversación')
         : h('a', { href: '#/inicio' }, icono('izquierda', 15), 'Inicio'),
       h('span', { 'aria-hidden': 'true' }, '/'),
-      h('span', { class: 'carpeta-migas', title: i.cwd || '' }, carpeta),
+      h('span', { class: 'carpeta-migas', title: i.cwd || '' }, nombreCarpeta(i)),
       h('button', { type: 'button', class: 'btn btn-fantasma btn-icono', 'aria-label': 'Cerrar la conversación (Esc)', title: 'Cerrar (Esc)', onclick: () => navegar('#/conversaciones') }, icono('cerrar', 16))),
     h('div', { class: 'lector-fila' },
-      h('div', null, h('h1', { class: 'lector-titulo' }, i.titulo || 'Sin título'), meta(i)),
+      h('h1', { class: 'lector-titulo' }, i.titulo || 'Sin título'),
       h('div', { class: 'acciones' },
-        h('a', { class: 'btn btn-chico', href: `/api/exportar?clave=${enc(v.clave)}&t=${TOKEN}`, download: '' }, icono('exportar', 14), 'Exportar .md'),
-        h('button', { type: 'button', class: 'btn btn-chico', onclick: () => post('/api/abrir', { clave: v.clave }).catch(avisarError) }, icono('carpeta', 14), 'Mostrar en carpeta'),
-        accionRetomar,
-        i.id ? h('button', { type: 'button', class: 'btn btn-chico btn-icono', 'aria-label': 'Copiar el ID de la sesión', title: `Copiar ID (${i.id})`, onclick: () => copiar(i.id, 'ID copiado') }, icono('copiar', 14)) : null)),
-    h('div', { class: 'lector-barra' },
-      etiquetasConversacion({ ...i, pendiente: false }, { completas: false }),
-      i.subagentes ? h('button', { type: 'button', class: 'btn btn-chico', onclick: verSubagentes }, icono('ramas', 14), plural(i.subagentes, 'subagente', 'subagentes')) : null,
-      h('span', { class: 'separador' }),
-      v.resaltar ? h('button', { type: 'button', class: 'btn btn-chico', onclick: siguienteCoincidencia }, icono('buscar', 14), `Siguiente “${v.resaltar}”`) : null,
-      h('button', { type: 'button', class: 'btn btn-chico', 'aria-pressed': String(prefs.herramientas), onclick: (e) => alternar('herramientas', e.currentTarget) }, icono('herramienta', 14), 'Herramientas'),
-      h('button', { type: 'button', class: 'btn btn-chico', 'aria-pressed': String(prefs.pensamiento), onclick: (e) => alternar('pensamiento', e.currentTarget) }, icono('idea', 14), 'Razonamiento'),
-      h('button', { type: 'button', class: 'btn btn-chico', onclick: irAlFinal }, icono('flecha_final', 14), 'Ir al final')));
+        principal,
+        h('button', { type: 'button', class: 'btn btn-chico btn-icono', 'aria-label': 'Más acciones', 'aria-haspopup': 'menu', 'aria-expanded': 'false', title: 'Más acciones', onclick: (e) => abrirAcciones(e.currentTarget) }, icono('puntos', 16)))),
+    h('div', { class: 'lector-fila lector-sub' },
+      h('div', { class: 'lector-izq' }, etiquetasConversacion({ ...i, pendiente: false }), datos(i)),
+      h('div', { class: 'acciones' },
+        v.resaltar ? h('button', { type: 'button', class: 'btn btn-chico', onclick: siguienteCoincidencia }, icono('buscar', 14), `Siguiente “${v.resaltar}”`) : null,
+        h('div', { class: 'seg seg-chico', role: 'group', 'aria-label': 'Qué mostrar' }, vista('herramientas', 'herramienta', 'Herramientas'), vista('pensamiento', 'idea', 'Razonamiento')),
+        h('button', { type: 'button', class: 'btn btn-chico btn-icono', 'aria-label': 'Ir al final', title: 'Ir al final', onclick: irAlFinal }, icono('flecha_final', 15)))));
+}
 
+function pintarCabecera() {
+  const actual = $('.lector-cab');
+  if (actual && v) actual.replaceWith(cabecera());
+}
+
+function pintar(lector, eventos) {
+  const cab = cabecera();
   const transcripcion = h('article', { class: 'transcripcion', id: 'transcripcion' },
     h('div', { class: 'cargar-mas', id: 'cargar-anteriores', hidden: true }, h('button', { type: 'button', class: 'btn btn-chico', onclick: cargarAnteriores }, 'Cargar mensajes anteriores')),
     h('div', { id: 'eventos', style: 'display: flex; flex-direction: column; gap: 14px' }),

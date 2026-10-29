@@ -138,7 +138,89 @@ export function nombreHerramienta(n = '') {
   return `${servidor} · ${m[2]}`;
 }
 
+// ---------- Archivos que tocó Claude y tokens usados ----------
+// Se juntan por conversación (y por subagente) para el índice de archivos y las estadísticas.
+
+const ACCIONES_ARCHIVO = { Read: 'leido', Write: 'escrito', Edit: 'editado', MultiEdit: 'editado', NotebookEdit: 'editado' };
+const CAMPOS_USO = [['entrada', 'input_tokens'], ['salida', 'output_tokens'], ['cacheEscritura', 'cache_creation_input_tokens'], ['cacheLectura', 'cache_read_input_tokens']];
+
+// La misma clave para C:\a\b.js, c:/a/b.js y C:\A\B.js: en Windows las rutas no distinguen mayúsculas.
+export function claveArchivo(ruta) {
+  const r = String(ruta ?? '').trim();
+  return /^[a-z]:[\\/]/i.test(r) ? r.replace(/\//g, '\\').toLowerCase() : r;
+}
+
+export const nuevoRastro = () => ({ archivos: new Map(), mensajes: new Map() });
+
+function tocar(rastro, ruta, accion, ts, checkpoint = false) {
+  if (typeof ruta !== 'string' || !ruta.trim() || ruta.length > 1000) return;
+  const k = claveArchivo(ruta);
+  let a = rastro.archivos.get(k);
+  if (!a) rastro.archivos.set(k, (a = { ruta, leido: 0, escrito: 0, editado: 0, checkpoint: false, primera: ts, ultima: ts }));
+  if (accion) a[accion]++;
+  if (checkpoint) a.checkpoint = true;
+  if (ts && (!a.primera || ts < a.primera)) a.primera = ts;
+  if (ts && (!a.ultima || ts >= a.ultima)) {
+    a.ultima = ts;
+    a.ruta = ruta;
+  }
+}
+
+export function rastrear(rastro, o) {
+  const ts = typeof o.timestamp === 'string' ? o.timestamp : null;
+  if (o.type === 'file-history-snapshot') {
+    const s = o.snapshot ?? {};
+    for (const ruta of Object.keys(s.trackedFileBackups ?? {})) tocar(rastro, ruta, null, s.timestamp ?? ts, true);
+    return;
+  }
+  if (o.type !== 'assistant') return;
+  const msg = o.message ?? {};
+  // Claude Code escribe una línea por bloque de la respuesta, todas con el mismo uso: se cuenta una vez por mensaje.
+  const idMsg = msg.id || o.requestId;
+  if (msg.usage && msg.model && msg.model !== '<synthetic>' && idMsg) {
+    const previo = rastro.mensajes.get(idMsg);
+    const m = previo ?? { dia: fechaLocal(ts, false) || 'sin-fecha', modelo: msg.model };
+    for (const [campo, api] of CAMPOS_USO) m[campo] = Math.max(m[campo] ?? 0, Number(msg.usage[api]) || 0);
+    if (!previo) rastro.mensajes.set(idMsg, m);
+  }
+  if (!Array.isArray(msg.content)) return;
+  for (const b of msg.content) {
+    if (b?.type === 'tool_use' && ACCIONES_ARCHIVO[b.name]) tocar(rastro, b.input?.file_path ?? b.input?.notebook_path, ACCIONES_ARCHIVO[b.name], ts);
+  }
+}
+
+export function cerrarRastro(rastro) {
+  const uso = new Map();
+  for (const m of rastro.mensajes.values()) {
+    const k = `${m.dia}|${m.modelo}`;
+    let x = uso.get(k);
+    if (!x) uso.set(k, (x = { dia: m.dia, modelo: m.modelo, entrada: 0, salida: 0, cacheEscritura: 0, cacheLectura: 0, respuestas: 0 }));
+    for (const [campo] of CAMPOS_USO) x[campo] += m[campo];
+    x.respuestas++;
+  }
+  return {
+    archivos: [...rastro.archivos.values()].sort((a, b) => (b.ultima ?? '').localeCompare(a.ultima ?? '')),
+    uso: [...uso.values()].sort((a, b) => a.dia.localeCompare(b.dia)),
+  };
+}
+
+// Solo archivos y tokens: para los subagentes, que no se muestran en la lista.
+export async function analizarRastro(abs) {
+  const rastro = nuevoRastro();
+  for await (const { linea } of leerLineas(abs)) {
+    let o;
+    try {
+      o = JSON.parse(linea);
+    } catch {
+      continue;
+    }
+    if (o && typeof o === 'object') rastrear(rastro, o);
+  }
+  return cerrarRastro(rastro);
+}
+
 export async function analizar(abs) {
+  const rastro = nuevoRastro();
   const r = {
     id: null, cwd: null, rama: null, entrada: null, version: null,
     tituloPropio: null, tituloIA: null, resumen: null, primerPrompt: null, ultimoPrompt: null,
@@ -168,6 +250,7 @@ export async function analizar(abs) {
       continue;
     }
     if (!o || typeof o !== 'object') continue;
+    rastrear(rastro, o);
     const ts = typeof o.timestamp === 'string' ? o.timestamp : null;
     if (ts) {
       if (!r.desde || ts < r.desde) r.desde = ts;
@@ -299,6 +382,7 @@ export async function analizar(abs) {
     r.ultimaIncompleta = true;
   }
   r.modelos = [...modelos];
+  Object.assign(r, cerrarRastro(rastro));
   if (!r.id) r.id = abs.match(RE_UUID)?.[0] ?? null;
   r.vacia = r.mensajesUsuario === 0 && r.respuestas < 3;
   for (const ev of eventos) delete ev.msgId;

@@ -96,7 +96,7 @@ async function mismosBytes(a, b) {
   }
 }
 
-async function copiarCompleto(origen, dst) {
+export async function copiarCompleto(origen, dst) {
   await fsp.mkdir(path.dirname(dst), { recursive: true });
   const tmp = dst + SUFIJO_TEMP;
   await conReintentos(() => fsp.copyFile(origen, tmp));
@@ -132,7 +132,7 @@ async function agregarAlFinal(origen, dst, tamDst, alAvanzar) {
   return true;
 }
 
-function sello(fecha = new Date()) {
+export function sello(fecha = new Date()) {
   const p = (n) => String(n).padStart(2, '0');
   return `${fecha.getFullYear()}-${p(fecha.getMonth() + 1)}-${p(fecha.getDate())}_${p(fecha.getHours())}${p(fecha.getMinutes())}${p(fecha.getSeconds())}`;
 }

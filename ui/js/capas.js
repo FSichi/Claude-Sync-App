@@ -57,6 +57,40 @@ export function abrirCajon({ titulo, contenido, pie = null, alCerrar } = {}) {
   return capa;
 }
 
+// Menú emergente anclado a un botón: flechas para moverse, Enter para elegir, Esc o clic afuera para cerrar.
+// items: [{ texto, icono, accion | href, descargar, detalle, deshabilitado, peligro }] o '-' para separar.
+export function abrirMenu(boton, items, { etiqueta = 'Acciones' } = {}) {
+  let capa;
+  const nodos = items.filter(Boolean).map((it) => {
+    if (it === '-') return h('div', { class: 'menu-sep', role: 'separator' });
+    const contenido = [icono(it.icono, 15), h('span', { class: 'menu-texto' }, it.texto, it.detalle ? h('span', { class: 'menu-detalle' }, it.detalle) : null)];
+    const clase = `menu-item${it.peligro ? ' peligro' : ''}`;
+    if (it.href) return h('a', { class: clase, role: 'menuitem', tabindex: '-1', href: it.href, download: it.descargar ? '' : null, onclick: () => capa.cerrar() }, contenido);
+    return h('button', { type: 'button', class: clase, role: 'menuitem', tabindex: '-1', disabled: it.deshabilitado, onclick: () => { capa.cerrar(); it.accion(); } }, contenido);
+  });
+  const panel = h('div', { class: 'menu', role: 'menu', 'aria-label': etiqueta, tabindex: '-1' }, nodos);
+  const velo = h('div', { class: 'velo velo-menu' }, panel);
+  boton.setAttribute('aria-expanded', 'true');
+  capa = montar(velo, panel, () => boton.setAttribute('aria-expanded', 'false'));
+  const r = boton.getBoundingClientRect();
+  const left = Math.max(8, Math.min(r.right - panel.offsetWidth, innerWidth - panel.offsetWidth - 8));
+  const top = r.bottom + 6 + panel.offsetHeight > innerHeight - 8 ? Math.max(8, r.top - panel.offsetHeight - 6) : r.bottom + 6;
+  Object.assign(panel.style, { left: `${left}px`, top: `${top}px` });
+  panel.addEventListener('keydown', (e) => {
+    const lista = [...panel.querySelectorAll('.menu-item:not(:disabled)')];
+    const i = lista.indexOf(document.activeElement);
+    const ir = (j) => lista[(j + lista.length) % lista.length]?.focus();
+    if (e.key === 'ArrowDown') ir(i + 1);
+    else if (e.key === 'ArrowUp') ir(i - 1);
+    else if (e.key === 'Home') ir(0);
+    else if (e.key === 'End') ir(-1);
+    else if (e.key === 'Tab') capa.cerrar();
+    else return;
+    e.preventDefault();
+  });
+  return capa;
+}
+
 export function cerrarSuperior() {
   const capa = pila[pila.length - 1];
   if (!capa) return false;

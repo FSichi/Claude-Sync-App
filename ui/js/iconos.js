@@ -40,6 +40,12 @@ const RUTAS = {
   escudo: '<path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/><path d="m9 12 2 2 4-4"/>',
   ramas: '<circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="8" r="2"/><path d="M6 8v8M18 10c0 4-6 3-10 6"/>',
   flecha_final: '<path d="M12 4v14M6 12l6 6 6-6M5 21h14"/>',
+  puntos: '<circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/>',
+  archivo_codigo: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M10 12.5l-2 2 2 2M14 12.5l2 2-2 2"/>',
+  chispa: '<path d="M12 3v4M12 17v4M3 12h4M17 12h4M6.3 6.3l2.5 2.5M15.2 15.2l2.5 2.5M6.3 17.7l2.5-2.5M15.2 8.8l2.5-2.5"/>',
+  reloj: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  grafico: '<path d="M3 21h18M6 17v-5M11 17V7M16 17v-8M21 17V4"/>',
+  editar: '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/>',
 };
 
 export function icono(nombre, tam = 16, grosor = 1.75) {

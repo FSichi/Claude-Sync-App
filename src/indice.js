@@ -2,11 +2,11 @@
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { fuenteApp } from './config.js';
-import { analizar, aMarkdown, tituloDe, fechaLocal } from './parser.js';
+import { analizar, analizarRastro, aMarkdown, tituloDe, fechaLocal } from './parser.js';
 import { cargarManifiesto, escribirAtomico, leerJson, rutaEnDestino } from './archivos.js';
 
 // Si cambia lo que extrae el parser, subir este número fuerza a reindexar todo.
-const VERSION_INDICE = 1;
+const VERSION_INDICE = 2;
 
 export const rutaIndice = (dest) => path.join(dest, '_estado', 'indice.json');
 
@@ -51,8 +51,11 @@ const nombreTexto = (clave, r) => {
 export async function actualizarIndice(dest, config, { cache = new Map(), onProgreso = () => {} } = {}) {
   const manifiesto = await cargarManifiesto(dest);
   const anterior = await leerJson(rutaIndice(dest), null);
-  const previas = anterior?.version === VERSION_INDICE ? anterior.conversaciones : {};
+  const vigente = anterior?.version === VERSION_INDICE;
+  const previas = vigente ? anterior.conversaciones : {};
+  const previosAux = vigente ? anterior.auxiliares ?? {} : {};
   const conversaciones = {};
+  const auxiliares = {};
 
   const app = fuenteApp(config);
   const archivosApp = Object.keys(manifiesto.archivos)
@@ -62,11 +65,15 @@ export async function actualizarIndice(dest, config, { cache = new Map(), onProg
 
   const subagentes = new Map();
   const candidatas = [];
+  const deSubagentes = [];
   for (const rel of Object.keys(manifiesto.archivos)) {
     const c = clasificarRuta(rel, config.fuentes);
     if (!c) continue;
     if (c.tipo === 'conversacion') candidatas.push({ rel, ...c });
-    else if (/\/agent-[^/]+\.jsonl$/.test(rel)) subagentes.set(c.sesion, (subagentes.get(c.sesion) ?? 0) + 1);
+    else if (/\/agent-[^/]+\.jsonl$/.test(rel)) {
+      subagentes.set(c.sesion, (subagentes.get(c.sesion) ?? 0) + 1);
+      deSubagentes.push({ rel, sesion: c.sesion });
+    }
   }
 
   let analizadas = 0;
@@ -101,6 +108,7 @@ export async function actualizarIndice(dest, config, { cache = new Map(), onProg
         mensajesUsuario: r.mensajesUsuario, respuestas: r.respuestas, herramientas: r.herramientas,
         imagenes: r.imagenes, compactaciones: r.compactaciones, modelos: r.modelos,
         lineasDanadas: r.lineasDanadas, vacia: r.vacia, tamano: st.size, texto,
+        archivos: r.archivos, uso: r.uso,
       };
     }
     const app = titulosApp.get(e.id);
@@ -116,7 +124,22 @@ export async function actualizarIndice(dest, config, { cache = new Map(), onProg
     };
   }
 
-  await escribirAtomico(rutaIndice(dest), JSON.stringify({ version: VERSION_INDICE, generado: new Date().toISOString(), conversaciones }));
+  // Los subagentes solo aportan archivos y tokens a la conversación que los lanzó.
+  for (let i = 0; i < deSubagentes.length; i++) {
+    const { rel, sesion } = deSubagentes[i];
+    const abs = rutaEnDestino(dest, rel);
+    const st = await fsp.stat(abs).catch(() => null);
+    if (!st) continue;
+    let a = previosAux[rel];
+    if (!a || a.tamano !== st.size) {
+      onProgreso({ fase: 'indexando', destino: dest, archivo: rel, hechos: i, total: deSubagentes.length });
+      const x = await analizarRastro(abs);
+      a = { sesion, tamano: st.size, archivos: x.archivos, uso: x.uso };
+    }
+    auxiliares[rel] = a;
+  }
+
+  await escribirAtomico(rutaIndice(dest), JSON.stringify({ version: VERSION_INDICE, generado: new Date().toISOString(), conversaciones, auxiliares }));
   await escribirAtomico(path.join(dest, 'texto', 'INDICE.md'), indiceMarkdown(conversaciones));
   return { total: Object.keys(conversaciones).length, analizadas };
 }

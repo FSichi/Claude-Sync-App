@@ -48,6 +48,22 @@ export const navegar = (ruta) => {
   if (location.hash !== ruta) location.hash = ruta;
 };
 export const rutaConversacion = (clave) => `#/conversaciones/${enc(clave)}`;
+export const rutaArchivo = (clave) => `#/archivos/${enc(clave)}`;
+
+// Partes de una ruta de Windows o de Unix, para mostrar el nombre y la carpeta por separado.
+export const nombreDeRuta = (r = '') => r.split(/[\\/]/).filter(Boolean).pop() ?? r;
+export const carpetaDeRuta = (r = '') => r.replace(/[\\/][^\\/]*$/, '');
+
+// claude-opus-5-5 -> Opus 5.5 · claude-3-5-sonnet-20241022 -> Sonnet 3.5
+export function nombreModelo(m = '') {
+  const x = m.replace(/^claude-/, '').replace(/-\d{8}$/, '');
+  const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+  let r = x.match(/^([a-z]+)-(\d+)(?:-(\d+))?$/);
+  if (r) return `${cap(r[1])} ${r[2]}${r[3] ? `.${r[3]}` : ''}`;
+  r = x.match(/^(\d+)(?:-(\d+))?-([a-z]+)$/);
+  if (r) return `${cap(r[3])} ${r[1]}${r[2] ? `.${r[2]}` : ''}`;
+  return m;
+}
 
 // ---------- Formatos ----------
 export const numero = (n) => (n ?? 0).toLocaleString('es-AR');

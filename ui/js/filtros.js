@@ -8,6 +8,7 @@ export const ESTADOS = [
   { id: 'borrada', texto: 'Borradas en Claude', prueba: (c) => !c.recuperada && Boolean(c.eliminadaEnOrigen) },
   { id: 'recuperada', texto: 'Recuperadas', prueba: (c) => Boolean(c.recuperada) },
   { id: 'pendiente', texto: 'Con cambios sin respaldar', prueba: (c) => Boolean(c.pendiente) },
+  { id: 'riesgo', texto: 'En riesgo: Claude Code puede borrarlas en 7 días', prueba: (c) => Boolean(c.pendiente && c.vence && new Date(c.vence) - Date.now() < 7 * 86400000) },
   { id: 'archivada', texto: 'Archivadas en la app de escritorio', prueba: (c) => Boolean(c.archivadaEnApp) },
 ];
 export const ORIGENES = {
